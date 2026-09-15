@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/foundation.dart';
 import 'package:intl/intl.dart';
@@ -108,7 +109,10 @@ class CloudSyncService {
           batch.set(op.docRef, dataWithMeta, SetOptions(merge: true));
         }
 
-        await batch.commit();
+        await batch.commit().timeout(
+          const Duration(seconds: 15),
+          onTimeout: () => throw TimeoutException('انتهت مهلة إرسال البيانات إلى خادم Firestore'),
+        );
       }
 
       // Update user root doc metadata
@@ -116,7 +120,10 @@ class CloudSyncService {
         'last_sync_at': FieldValue.serverTimestamp(),
         'email': _authService.currentUser?.email ?? '',
         'records_count': totalCount,
-      }, SetOptions(merge: true));
+      }, SetOptions(merge: true)).timeout(
+        const Duration(seconds: 10),
+        onTimeout: () => throw TimeoutException('انتهت مهلة تحديث معلومات المزامنة السحابية'),
+      );
 
       await _recordSyncSuccess();
 
@@ -125,6 +132,30 @@ class CloudSyncService {
         success: true,
         message: 'تم رفع $totalCount سجلاً إلى سحابة Firebase بنجاح!',
         totalUploaded: totalCount,
+      );
+    } on FirebaseException catch (fe, stack) {
+      debugPrint('[CloudSyncService] FirebaseException in uploadLocalDataToCloud: ${fe.code} - ${fe.message}\n$stack');
+      String msg;
+      if (fe.code == 'permission-denied') {
+        msg = 'تم رفض الإذن من السحابة. يرجى التأكد من ضبط قواعد الأمان (Firestore Rules) في لوحة تحكم Firebase.';
+      } else if (fe.code == 'not-found' || fe.message?.contains('database') == true) {
+        msg = 'قاعدة بيانات Cloud Firestore غير مفعلة، يرجى تفعيلها بالضغط على Create Database في لوحة Firebase.';
+      } else if (fe.code == 'unavailable') {
+        msg = 'خوادم Firestore غير متاحة حالياً أو الاتصال ضعيف، يرجى التحقق من اتصال الإنترنت.';
+      } else {
+        msg = 'خطأ سحابي (${fe.code}): ${fe.message ?? "تعذر إتمام المزامنة"}';
+      }
+      return (
+        success: false,
+        message: msg,
+        totalUploaded: 0,
+      );
+    } on TimeoutException catch (te) {
+      debugPrint('[CloudSyncService] Timeout in uploadLocalDataToCloud: $te');
+      return (
+        success: false,
+        message: 'انتهت مهلة الاتصال بسحابة Firebase (15 ثانية). يرجى التأكد من إنشاء قاعدة بيانات Firestore في لوحة تحكم Firebase وضبط قواعد الأمان.',
+        totalUploaded: 0,
       );
     } catch (e, stack) {
       debugPrint('[CloudSyncService] Error in uploadLocalDataToCloud: $e\n$stack');
@@ -161,15 +192,18 @@ class CloudSyncService {
 
       final userDocRef = _firestore.collection('users').doc(userId);
 
-      // Fetch all subcollections in parallel
+      // Fetch all subcollections in parallel with timeout
       final results = await Future.wait([
-        userDocRef.collection('wallets').get(),
-        userDocRef.collection('transactions').get(),
-        userDocRef.collection('persons').get(),
-        userDocRef.collection('debts').get(),
-        userDocRef.collection('categories').get(),
-        userDocRef.collection('recurring').get(),
-      ]);
+        userDocRef.collection('wallets').get().timeout(const Duration(seconds: 12)),
+        userDocRef.collection('transactions').get().timeout(const Duration(seconds: 12)),
+        userDocRef.collection('persons').get().timeout(const Duration(seconds: 12)),
+        userDocRef.collection('debts').get().timeout(const Duration(seconds: 12)),
+        userDocRef.collection('categories').get().timeout(const Duration(seconds: 12)),
+        userDocRef.collection('recurring').get().timeout(const Duration(seconds: 12)),
+      ]).timeout(
+        const Duration(seconds: 15),
+        onTimeout: () => throw TimeoutException('انتهت مهلة استرجاع البيانات من السحابة'),
+      );
 
       final walletsDocs = results[0].docs;
       final txDocs = results[1].docs;
@@ -229,6 +263,30 @@ class CloudSyncService {
         success: true,
         message: 'تمت استعادة $totalCount سجلاً من السحابة بنجاح!',
         totalDownloaded: totalCount,
+      );
+    } on FirebaseException catch (fe, stack) {
+      debugPrint('[CloudSyncService] FirebaseException in downloadCloudDataToLocal: ${fe.code} - ${fe.message}\n$stack');
+      String msg;
+      if (fe.code == 'permission-denied') {
+        msg = 'تم رفض الإذن من السحابة. يرجى التأكد من ضبط قواعد الأمان (Rules) في لوحة تحكم Firebase.';
+      } else if (fe.code == 'not-found' || fe.message?.contains('database') == true) {
+        msg = 'قاعدة بيانات Firestore غير مفعلة في مشروع Firebase، يرجى تفعيلها من لوحة Firebase.';
+      } else if (fe.code == 'unavailable') {
+        msg = 'خوادم Firestore غير متاحة حالياً أو الاتصال ضعيف، يرجى التحقق من اتصال الإنترنت.';
+      } else {
+        msg = 'خطأ سحابي (${fe.code}): ${fe.message ?? "تعذر استرجاع البيانات"}';
+      }
+      return (
+        success: false,
+        message: msg,
+        totalDownloaded: 0,
+      );
+    } on TimeoutException catch (te) {
+      debugPrint('[CloudSyncService] Timeout in downloadCloudDataToLocal: $te');
+      return (
+        success: false,
+        message: 'انتهت مهلة استرجاع البيانات من السحابة (15 ثانية). يرجى التحقق من اتصال الإنترنت وتفعيل Firestore.',
+        totalDownloaded: 0,
       );
     } catch (e, stack) {
       debugPrint('[CloudSyncService] Error in downloadCloudDataToLocal: $e\n$stack');

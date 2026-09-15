@@ -660,6 +660,45 @@ class _SettingsScreenState extends State<SettingsScreen> {
               },
             ),
 
+            ValueListenableBuilder<({bool? success, String? message})>(
+              valueListenable: AutoSyncService.instance.syncResultNotifier,
+              builder: (context, result, _) {
+                if (result.message == null) return const SizedBox.shrink();
+                final isSuccess = result.success == true;
+                return Container(
+                  margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  decoration: BoxDecoration(
+                    color: (isSuccess ? AppColors.income : AppColors.expense).withValues(alpha: 0.1),
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(
+                      color: (isSuccess ? AppColors.income : AppColors.expense).withValues(alpha: 0.3),
+                    ),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(
+                        isSuccess ? Icons.check_circle_outline_rounded : Icons.info_outline_rounded,
+                        size: 18,
+                        color: isSuccess ? AppColors.income : AppColors.expense,
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          result.message!,
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: isSuccess ? AppColors.income : AppColors.expense,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                );
+              },
+            ),
+
             Divider(height: 1, color: isDark ? AppColors.darkBorder : AppColors.lightBorder),
 
             ListTile(

@@ -20,9 +20,14 @@ class AutoSyncService {
   StreamSubscription<List<ConnectivityResult>>? _connectivitySubscription;
   bool _isAutoSyncing = false;
   DateTime? _lastSyncAttempt;
+  List<ConnectivityResult> _previousResults = [ConnectivityResult.none];
 
   /// Notifier reflecting whether an automatic synchronization is currently in progress
   final ValueNotifier<bool> isSyncingNotifier = ValueNotifier<bool>(false);
+
+  /// Notifier with the result of the last sync attempt (for displaying status to the user)
+  final ValueNotifier<({bool? success, String? message})> syncResultNotifier =
+      ValueNotifier((success: null, message: null));
 
   AutoSyncService._init();
 
@@ -59,18 +64,24 @@ class AutoSyncService {
       _handleConnectivityChange(results);
     });
 
-    // Check connectivity on startup and sync if online
-    checkConnectivityAndSync();
+    // Check connectivity after a short delay on startup once Firebase Auth initializes
+    Timer(const Duration(milliseconds: 2500), () {
+      checkConnectivityAndSync();
+    });
   }
 
   /// Handle network changes detected by Connectivity
   void _handleConnectivityChange(List<ConnectivityResult> results) {
+    final wasConnected = _previousResults.any((r) => r != ConnectivityResult.none);
     final isConnected = results.any((r) => r != ConnectivityResult.none);
-    if (isConnected) {
+    _previousResults = results;
+
+    // Only trigger auto-sync if transitioning from offline to online
+    if (isConnected && !wasConnected) {
       debugPrint('[AutoSyncService] Internet connection restored ($results). Triggering auto-sync...');
       syncNow(reason: 'internet_connected');
     } else {
-      debugPrint('[AutoSyncService] Device is offline ($results).');
+      debugPrint('[AutoSyncService] Connectivity event ($results) - wasConnected: $wasConnected, isConnected: $isConnected.');
     }
   }
 
@@ -78,6 +89,7 @@ class AutoSyncService {
   Future<bool> checkConnectivityAndSync() async {
     try {
       final results = await _connectivity.checkConnectivity();
+      _previousResults = results;
       final isConnected = results.any((r) => r != ConnectivityResult.none);
       if (isConnected) {
         return await syncNow(reason: 'startup_online');
@@ -122,12 +134,21 @@ class AutoSyncService {
       _lastSyncAttempt = DateTime.now();
 
       debugPrint('[AutoSyncService] Starting auto-sync for user: $userId (Reason: $reason)...');
-      final result = await _cloudSyncService.uploadLocalDataToCloud(userId);
+      final result = await _cloudSyncService.uploadLocalDataToCloud(userId).timeout(
+        const Duration(seconds: 20),
+        onTimeout: () => (
+          success: false,
+          message: 'انتهت مهلة المزامنة السحابية (يرجى التحقق من توفر الإنترنت وإنشاء قاعدة بيانات Firestore)',
+          totalUploaded: 0,
+        ),
+      );
 
+      syncResultNotifier.value = (success: result.success, message: result.message);
       debugPrint('[AutoSyncService] Auto-sync finished: Success=${result.success}, Items=${result.totalUploaded}');
       return result.success;
     } catch (e, stack) {
       debugPrint('[AutoSyncService] Auto-sync error: $e\n$stack');
+      syncResultNotifier.value = (success: false, message: 'فشل المزامنة التلقائية: $e');
       return false;
     } finally {
       _isAutoSyncing = false;
