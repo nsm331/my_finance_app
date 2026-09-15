@@ -9,6 +9,7 @@ import '../providers/auth_provider.dart';
 import '../services/backup_service.dart';
 import '../services/database_helper.dart';
 import '../services/cloud_sync_service.dart';
+import '../services/auto_sync_service.dart';
 import '../widgets/confirm_dialog.dart';
 import '../core/constants/app_colors.dart';
 import 'pin_lock_screen.dart';
@@ -30,6 +31,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   String? _lastBackupDate;
   String? _lastCloudSyncDate;
   bool _autoBackupEnabled = true;
+  bool _autoCloudSyncEnabled = true;
   bool _isBackingUp = false;
   bool _isRestoring = false;
   bool _isCloudSyncing = false;
@@ -45,11 +47,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final date = await backupService.getLastBackupDate();
     final autoEnabled = await backupService.isAutoBackupEnabled();
     final syncDate = await CloudSyncService().getLastSyncDate();
+    final autoCloud = await AutoSyncService.instance.isAutoSyncEnabled();
     if (mounted) {
       setState(() {
         _lastBackupDate = date;
         _autoBackupEnabled = autoEnabled;
         _lastCloudSyncDate = syncDate;
+        _autoCloudSyncEnabled = autoCloud;
       });
     }
   }
@@ -600,9 +604,64 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       ),
                     ],
                   ),
+                  ValueListenableBuilder<bool>(
+                    valueListenable: AutoSyncService.instance.isSyncingNotifier,
+                    builder: (context, isAutoSyncing, _) {
+                      if (!isAutoSyncing) return const SizedBox.shrink();
+                      return const Padding(
+                        padding: EdgeInsets.only(top: 8),
+                        child: Row(
+                          children: [
+                            SizedBox(
+                              width: 12,
+                              height: 12,
+                              child: CircularProgressIndicator(strokeWidth: 2, color: AppColors.primaryTeal),
+                            ),
+                            SizedBox(width: 8),
+                            Text(
+                              'جاري المزامنة التلقائية عبر الإنترنت الآن...',
+                              style: TextStyle(
+                                fontSize: 11,
+                                color: AppColors.primaryTeal,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ],
+                        ),
+                      );
+                    },
+                  ),
                 ],
               ),
             ),
+
+            // Switch: Auto Sync on Internet Connection
+            SwitchListTile(
+              title: const Text('المزامنة التلقائية عند الاتصال بالإنترنت'),
+              subtitle: Text(
+                'رفع وتحديث بياناتك على السحابة تلقائياً بمجرد فتح النت أو توفر الشبكة',
+                style: TextStyle(
+                  fontSize: 11,
+                  color: isDark ? AppColors.darkTextSecondary : AppColors.lightTextSecondary,
+                ),
+              ),
+              secondary: const Icon(Icons.sync_rounded, color: AppColors.primaryTeal),
+              value: _autoCloudSyncEnabled,
+              onChanged: (val) async {
+                await AutoSyncService.instance.setAutoSyncEnabled(val);
+                setState(() => _autoCloudSyncEnabled = val);
+                if (val) {
+                  await AutoSyncService.instance.checkConnectivityAndSync();
+                  final syncDate = await CloudSyncService().getLastSyncDate();
+                  if (mounted) {
+                    setState(() => _lastCloudSyncDate = syncDate);
+                  }
+                }
+              },
+            ),
+
+            Divider(height: 1, color: isDark ? AppColors.darkBorder : AppColors.lightBorder),
+
             ListTile(
               leading: _isCloudSyncing
                   ? const SizedBox(

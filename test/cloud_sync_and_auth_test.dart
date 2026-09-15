@@ -2,6 +2,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:my_finance_app/services/auth_service.dart';
 import 'package:my_finance_app/services/cloud_sync_service.dart';
+import 'package:my_finance_app/services/auto_sync_service.dart';
 import 'package:my_finance_app/services/database_helper.dart';
 
 void main() {
@@ -79,6 +80,39 @@ void main() {
       expect(DatabaseHelper.tableCategories, 'categories');
       expect(DatabaseHelper.tableRecurring, 'recurring_transactions');
       expect(DatabaseHelper.colUserId, 'user_id');
+    });
+  });
+
+  group('AutoSyncService Tests', () {
+    setUp(() {
+      SharedPreferences.setMockInitialValues({});
+    });
+
+    test('isAutoSyncEnabled defaults to true and setAutoSyncEnabled persists value', () async {
+      final autoSync = AutoSyncService.instance;
+      expect(await autoSync.isAutoSyncEnabled(), isTrue);
+
+      await autoSync.setAutoSyncEnabled(false);
+      expect(await autoSync.isAutoSyncEnabled(), isFalse);
+
+      await autoSync.setAutoSyncEnabled(true);
+      expect(await autoSync.isAutoSyncEnabled(), isTrue);
+    });
+
+    test('syncNow returns false when auto-sync is disabled', () async {
+      final autoSync = AutoSyncService.instance;
+      await autoSync.setAutoSyncEnabled(false);
+
+      final result = await autoSync.syncNow(reason: 'internet_connected');
+      expect(result, isFalse);
+    });
+
+    test('syncNow returns false when no user is logged in', () async {
+      final autoSync = AutoSyncService.instance;
+      await autoSync.setAutoSyncEnabled(true);
+
+      final result = await autoSync.syncNow(reason: 'internet_connected');
+      expect(result, isFalse);
     });
   });
 }

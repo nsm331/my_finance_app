@@ -13,6 +13,7 @@ import 'services/hive_db_service.dart';
 import 'services/data_migration_service.dart';
 import 'services/backup_service.dart';
 import 'services/firebase_service.dart';
+import 'services/auto_sync_service.dart';
 import 'screens/main_navigation_screen.dart';
 
 Future<void> main() async {
@@ -25,6 +26,9 @@ Future<void> main() async {
 
     // Safely initialize Firebase
     await FirebaseService.initialize();
+
+    // Initialize Auto-Sync on Internet Connection
+    AutoSyncService.instance.initialize();
 
     // One-time safe migration from Hive to SQLite
     final migrationService = DataMigrationService();
