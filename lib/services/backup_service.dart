@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:intl/intl.dart';
 import 'package:path/path.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:permission_handler/permission_handler.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'database_helper.dart';
@@ -199,8 +200,39 @@ class BackupService {
   /// Path to the dedicated automatic backup folder ("ميزانيتي") on Android
   static const String androidDedicatedBackupPath = '/storage/emulated/0/Documents/ميزانيتي';
 
+  /// Requests necessary storage permissions on Android.
+  /// Requests Permission.manageExternalStorage (crucial for Android 11+ Scoped Storage)
+  /// and Permission.storage (for Android 10 and below).
+  Future<bool> requestStoragePermissions() async {
+    if (!Platform.isAndroid) return true;
+
+    try {
+      // 1. Android 11+ (API 30+) Scoped Storage requirement
+      var manageStatus = await Permission.manageExternalStorage.status;
+      if (!manageStatus.isGranted) {
+        manageStatus = await Permission.manageExternalStorage.request();
+        debugPrint('[BackupService] Permission.manageExternalStorage requested: $manageStatus');
+      }
+
+      // 2. Android 10 and below storage requirement
+      var storageStatus = await Permission.storage.status;
+      if (!storageStatus.isGranted) {
+        storageStatus = await Permission.storage.request();
+        debugPrint('[BackupService] Permission.storage requested: $storageStatus');
+      }
+
+      final isGranted = manageStatus.isGranted || storageStatus.isGranted;
+      debugPrint('[BackupService] Storage permission granted: $isGranted (manage: $manageStatus, storage: $storageStatus)');
+      return isGranted;
+    } catch (e, stack) {
+      debugPrint('[BackupService] Error requesting storage permissions: $e\n$stack');
+      return false;
+    }
+  }
+
   /// Resolves and ensures the dedicated auto-backup directory exists.
-  /// Targets "/storage/emulated/0/Documents/ميزانيتي" on Android.
+  /// - Android: /storage/emulated/0/Documents/ميزانيتي
+  /// - iOS / fallback: getApplicationDocumentsDirectory() + /ميزانيتي
   Future<Directory> getDedicatedAutoBackupDirectory() async {
     Directory targetDir;
     if (Platform.isAndroid) {
@@ -208,20 +240,24 @@ class BackupService {
       if (!targetDir.existsSync()) {
         try {
           targetDir.createSync(recursive: true);
+          debugPrint('[BackupService] Created Android dedicated directory: ${targetDir.path}');
         } catch (e) {
-          debugPrint('[BackupService] Direct creation of $androidDedicatedBackupPath failed: $e, using app documents fallback.');
+          debugPrint('[BackupService] Direct creation of $androidDedicatedBackupPath failed: $e, falling back to app documents directory.');
           final baseDir = await getApplicationDocumentsDirectory();
           targetDir = Directory(join(baseDir.path, 'ميزانيتي'));
           if (!targetDir.existsSync()) {
             targetDir.createSync(recursive: true);
+            debugPrint('[BackupService] Created fallback directory: ${targetDir.path}');
           }
         }
       }
     } else {
+      // iOS / other platforms fallback
       final baseDir = await getApplicationDocumentsDirectory();
       targetDir = Directory(join(baseDir.path, 'ميزانيتي'));
       if (!targetDir.existsSync()) {
         targetDir.createSync(recursive: true);
+        debugPrint('[BackupService] Created iOS/fallback directory: ${targetDir.path}');
       }
     }
     return targetDir;
@@ -231,16 +267,25 @@ class BackupService {
   Future<bool> checkAndRunDailyBackup() async {
     try {
       final isEnabled = await isAutoBackupEnabled();
-      if (!isEnabled) return false;
+      if (!isEnabled) {
+        debugPrint('[BackupService] Daily auto-backup is disabled in settings.');
+        return false;
+      }
 
       final prefs = await SharedPreferences.getInstance();
       final todayStr = DateFormat('yyyy-MM-dd').format(DateTime.now());
       final lastAutoDate = prefs.getString(keyLastAutoBackupDate);
 
       if (lastAutoDate != todayStr) {
+        // Request storage permissions before writing to public storage
+        await requestStoragePermissions();
+
         final dbPath = await _dbHelper.getDatabaseFilePath();
         final dbFile = File(dbPath);
-        if (!await dbFile.exists() || await dbFile.length() == 0) return false;
+        if (!await dbFile.exists() || await dbFile.length() == 0) {
+          debugPrint('[BackupService] FAILED: SQLite database file not found or empty at: $dbPath');
+          return false;
+        }
 
         final targetDir = await getDedicatedAutoBackupDirectory();
         final targetFileName = 'backup_$todayStr.db';
@@ -251,12 +296,14 @@ class BackupService {
         await prefs.setString(keyLastAutoBackupDate, todayStr);
         await prefs.setString(keyLastBackupDate, todayStr);
 
-        debugPrint('[BackupService] Daily auto-backup created in dedicated folder: ${targetFile.path}');
+        debugPrint('[BackupService] SUCCESS: Daily auto-backup created in dedicated folder: ${targetFile.path}');
         return true;
+      } else {
+        debugPrint('[BackupService] Daily auto-backup already completed today ($todayStr).');
+        return false;
       }
-      return false;
-    } catch (e) {
-      debugPrint('[BackupService] Error in daily auto-backup: $e');
+    } catch (e, stack) {
+      debugPrint('[BackupService] ERROR in daily auto-backup: $e\n$stack');
       return false;
     }
   }
@@ -264,9 +311,12 @@ class BackupService {
   /// Manually creates a daily auto-backup file in the dedicated folder
   Future<({bool success, String message, String? savedPath})> createDedicatedBackupNow() async {
     try {
+      await requestStoragePermissions();
+
       final dbPath = await _dbHelper.getDatabaseFilePath();
       final dbFile = File(dbPath);
       if (!await dbFile.exists() || await dbFile.length() == 0) {
+        debugPrint('[BackupService] FAILED: Database file not found or empty at: $dbPath');
         return (
           success: false,
           message: 'ملف قاعدة البيانات غير موجود أو فارغ',
@@ -285,14 +335,14 @@ class BackupService {
       await prefs.setString(keyLastAutoBackupDate, todayStr);
       await prefs.setString(keyLastBackupDate, todayStr);
 
-      debugPrint('[BackupService] Dedicated backup created manually: ${targetFile.path}');
+      debugPrint('[BackupService] SUCCESS: Dedicated backup created manually at: ${targetFile.path}');
       return (
         success: true,
         message: 'تم حفظ النسخة التلقائية بنجاح في مجلد ميزانيتي:\n${targetFile.path}',
         savedPath: targetFile.path,
       );
-    } catch (e) {
-      debugPrint('[BackupService] Error creating dedicated backup: $e');
+    } catch (e, stack) {
+      debugPrint('[BackupService] ERROR creating dedicated backup: $e\n$stack');
       return (
         success: false,
         message: 'تعذر إنشاء النسخة في المجلد المخصص: $e',
