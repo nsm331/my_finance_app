@@ -1,16 +1,79 @@
-# my_finance_app
+# تطبيق ميزانيتي (My Finance App) 💰📱
 
-A new Flutter project.
+تطبيق متكامل لإدارة المصاريف والميزانية الشخصية، إدارة المحافظ المتعددة، متابعة الديون، واستخراج التقارير المالية وكشوفات الحساب بصيغة PDF مع حماية أمنية بيومترية عالية ونسخ احتياطي لقاعدة البيانات.
 
-## Getting Started
+مبني باستخدام **Flutter** وقاعدة بيانات **SQLite** محلياً بالكامل للحفاظ على أمان وخصوصية البيانات 100%.
 
-This project is a starting point for a Flutter application.
+---
 
-A few resources to get you started if this is your first Flutter project:
+## ✨ المميزات الرئيسية
 
-- [Lab: Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Cookbook: Useful Flutter samples](https://docs.flutter.dev/cookbook)
+- 💼 **إدارة المحافظ المتعددة (Multi-Wallet & Multi-Currency):**
+  - دعم محافظ نقدية، بنكية، وإلكترونية مع تخصيص الألوان والأيقونات.
+  - دعم متعدد للعملات (ريال يمني، ريال سعودي، دولار أمريكي، وغيرها) مع حاسبة تحويل أسعار الصرف.
+  - دعم القيود المزدوجة ونقل الأموال بين المحافظ بسهولة (Transfers).
 
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
+- 📊 **تتبع المصاريف والدخل والميزانيات:**
+  - تسجيل المعاملات مع تصنيفات مخصصة وأيقونات تفاعلية.
+  - ميزانيات شهرية لكل تصنيف مع شريط تتبع ذكي لنسبة الاستهلاك.
+  - معاملات دورية متكررة (رواتب، فواتير، اشتراكات).
+
+- 🤝 **إدارة الديون والأشخاص (Debts & Loans):**
+  - تتبع الديون (لك وعليك) لكل شخص بشكل منفصل.
+  - تسجيل سدادات جزئية أو كلية مع تحديث الرصيد تلقائياً.
+  - توليد ومشاركة كشوفات حساب PDF تفصيلية ومخصصة لكل شخص أو فترة زمنية.
+
+- 🔒 **الأمان والحماية المتقدمة:**
+  - قفل التطبيق برمز مرور سري (PIN) من 4 أرقام مع مسار تغيير آمن ثلاثي الخطوات (3-Step State Machine).
+  - دعم البصمة الحيوية (Biometrics / Fingerprint) مع حماية ضد القفل المتكرر (Debounce & Lifecycle Guard).
+
+- 💾 **النسخ الاحتياطي والاستعادة المباشرة (SQLite .db):**
+  - تصدير واستيراد ملف قاعدة البيانات الحقيقي (`.db`) بضغطة زر مع فحص السلامة الداخلي (`PRAGMA integrity_check`).
+  - نسخ احتياطي يومي تلقائي إلى مجلد عام مخصص (`Documents/ميزانيتي`).
+
+- 🎨 **تصميم عصري (Material 3):**
+  - دعم كامل للوضعين الفاتح والداكن (Light & Dark Theme).
+  - واجهات عربية كاملة مصممة بعناية وسلاسة في الحركة.
+
+---
+
+## 🛠️ التقنيات المستخدمة (Tech Stack)
+
+- **Framework:** [Flutter](https://flutter.dev/) (Dart)
+- **Database:** [SQLite](https://pub.dev/packages/sqflite) via `sqflite` & `path`
+- **State Management:** [Provider](https://pub.dev/packages/provider)
+- **Security & Biometrics:** `local_auth`, `crypto` (SHA-256)
+- **Document Generation:** `pdf`, `printing`
+- **Storage & Sharing:** `file_picker`, `share_plus`, `shared_preferences`
+
+---
+
+## 🚀 التشغيل والتطوير (Getting Started)
+
+### المتطلبات الأساسية:
+- Flutter SDK (3.x أو أحدث)
+- Android Studio أو VS Code مع حزم Dart & Flutter
+- جهاز Android أو محاكي
+
+### خطوات التشغيل:
+```bash
+# 1. استنساخ المشروع
+git clone https://github.com/nsm331/my_finance_app.git
+
+# 2. الانتقال لمجلد المشروع
+cd my_finance_app
+
+# 3. تثبيت الحزم
+flutter pub get
+
+# 4. تشغيل الاختبارات
+flutter test
+
+# 5. تشغيل التطبيق
+flutter run
+```
+
+---
+
+## 📄 الترخيص (License)
+هذا المشروع مرخص تحت رخصة [MIT License](LICENSE).
