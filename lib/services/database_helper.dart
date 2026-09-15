@@ -13,7 +13,7 @@ import '../models/debt_model.dart';
 
 class DatabaseHelper {
   static const String _databaseName = 'my_finance.db';
-  static const int _databaseVersion = 2;
+  static const int _databaseVersion = 3;
 
   // Table names
   static const String tableWallets = 'wallets';
@@ -22,12 +22,25 @@ class DatabaseHelper {
   static const String tableTransactions = 'transactions';
   static const String tableRecurring = 'recurring_transactions';
   static const String tableDebts = 'debts';
+  static const String colUserId = 'user_id';
 
   // Singleton instance
   static final DatabaseHelper instance = DatabaseHelper._init();
   static Database? _database;
 
+  // Active User ID for row-level user isolation
+  String? _activeUserId;
+
   DatabaseHelper._init();
+
+  /// Set the active user ID for filtering and saving records
+  void setActiveUserId(String? userId) {
+    _activeUserId = userId;
+    debugPrint('[DatabaseHelper] Active User ID set to: $_activeUserId');
+  }
+
+  /// Get the active user ID
+  String? get activeUserId => _activeUserId;
 
   Future<Database> get database async {
     if (_database != null && _database!.isOpen) return _database!;
@@ -65,11 +78,68 @@ class DatabaseHelper {
     if (oldVersion < 2) {
       await _ensureWalletColumnsExist(db);
     }
+    if (oldVersion < 3) {
+      await _upgradeToVersion3(db);
+    }
   }
 
   Future<void> _onOpen(Database db) async {
-    // Extra safety guarantee that wallet columns exist across app launches
+    // Extra safety guarantee that wallet columns and user_id exist across launches
     await _ensureWalletColumnsExist(db);
+    await _ensureUserIdColumnsExist(db);
+  }
+
+  Future<void> _upgradeToVersion3(Database db) async {
+    debugPrint('Upgrading SQLite Database to version 3 (adding user_id columns)...');
+    await _ensureUserIdColumnsExist(db);
+  }
+
+  Future<void> _ensureUserIdColumnsExist(Database db) async {
+    final tables = [
+      tableWallets,
+      tablePersons,
+      tableCategories,
+      tableTransactions,
+      tableRecurring,
+      tableDebts,
+    ];
+
+    for (final table in tables) {
+      try {
+        final info = await db.rawQuery('PRAGMA table_info($table)');
+        final columnNames = info.map((row) => row['name']?.toString() ?? '').toSet();
+        if (!columnNames.contains('user_id')) {
+          await db.execute('ALTER TABLE $table ADD COLUMN user_id TEXT');
+          debugPrint('[DatabaseHelper] Successfully added user_id column to table: $table');
+        }
+      } catch (e) {
+        debugPrint('[DatabaseHelper] Note on adding user_id to $table: $e');
+      }
+    }
+  }
+
+  /// Associates any existing local records without user_id with the newly signed in user
+  Future<void> linkLocalDataToUser(String userId) async {
+    try {
+      final db = await database;
+      final tables = [
+        tableWallets,
+        tablePersons,
+        tableCategories,
+        tableTransactions,
+        tableRecurring,
+        tableDebts,
+      ];
+      for (final tbl in tables) {
+        await db.execute(
+          'UPDATE $tbl SET user_id = ? WHERE user_id IS NULL OR user_id = ""',
+          [userId],
+        );
+      }
+      debugPrint('[DatabaseHelper] Successfully linked local data to user: $userId');
+    } catch (e) {
+      debugPrint('[DatabaseHelper] Error linking local data to user: $e');
+    }
   }
 
   Future<void> _ensureWalletColumnsExist(Database db) async {
@@ -95,28 +165,30 @@ class DatabaseHelper {
   Future<void> _onCreate(Database db, int version) async {
     debugPrint('Creating SQLite Database tables (version $version)...');
 
-    // 1. Wallets table: id (PRIMARY KEY AUTOINCREMENT), name (TEXT), icon_code, color_value
+    // 1. Wallets table: id, name, icon_code, color_value, user_id
     await db.execute('''
       CREATE TABLE $tableWallets (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         name TEXT NOT NULL,
         icon_code INTEGER NOT NULL DEFAULT 62772,
-        color_value INTEGER NOT NULL DEFAULT 4279071880
+        color_value INTEGER NOT NULL DEFAULT 4279071880,
+        user_id TEXT
       )
     ''');
 
-    // 2. Persons table: id, name, phone, notes, created_at
+    // 2. Persons table: id, name, phone, notes, created_at, user_id
     await db.execute('''
       CREATE TABLE $tablePersons (
         id TEXT PRIMARY KEY,
         name TEXT NOT NULL,
         phone TEXT,
         notes TEXT,
-        created_at TEXT NOT NULL
+        created_at TEXT NOT NULL,
+        user_id TEXT
       )
     ''');
 
-    // 3. Categories table
+    // 3. Categories table: id, name, icon_code, color_value, ..., user_id
     await db.execute('''
       CREATE TABLE $tableCategories (
         id TEXT PRIMARY KEY,
@@ -125,11 +197,12 @@ class DatabaseHelper {
         color_value INTEGER NOT NULL,
         is_expense INTEGER NOT NULL DEFAULT 1,
         is_default INTEGER NOT NULL DEFAULT 0,
-        budgets_json TEXT
+        budgets_json TEXT,
+        user_id TEXT
       )
     ''');
 
-    // 4. Transactions table: id, amount, currency, type, date, category, wallet_id (FOREIGN KEY referencing wallets), isTransfer (INTEGER)
+    // 4. Transactions table
     await db.execute('''
       CREATE TABLE $tableTransactions (
         id TEXT PRIMARY KEY,
@@ -152,6 +225,7 @@ class DatabaseHelper {
         target_amount REAL,
         is_recurring INTEGER NOT NULL DEFAULT 0,
         recurring_id TEXT,
+        user_id TEXT,
         FOREIGN KEY (wallet_id) REFERENCES $tableWallets (id) ON DELETE SET NULL
       )
     ''');
@@ -173,11 +247,12 @@ class DatabaseHelper {
         last_processed_date TEXT,
         is_active INTEGER NOT NULL DEFAULT 1,
         notes TEXT,
-        created_at TEXT NOT NULL
+        created_at TEXT NOT NULL,
+        user_id TEXT
       )
     ''');
 
-    // 6. Debts table: id, personId, amount, currency, type, etc.
+    // 6. Debts table
     await db.execute('''
       CREATE TABLE $tableDebts (
         id TEXT PRIMARY KEY,
@@ -191,6 +266,7 @@ class DatabaseHelper {
         created_at TEXT NOT NULL,
         notes TEXT,
         payments_json TEXT NOT NULL DEFAULT '[]',
+        user_id TEXT,
         FOREIGN KEY (person_id) REFERENCES $tablePersons (id) ON DELETE SET NULL
       )
     ''');
@@ -214,9 +290,13 @@ class DatabaseHelper {
   Future<int> insertWallet(WalletModel wallet, {Transaction? txn}) async {
     try {
       final executor = txn ?? await database;
+      final map = Map<String, dynamic>.from(wallet.toMap());
+      if (activeUserId != null && activeUserId!.isNotEmpty) {
+        map['user_id'] ??= activeUserId;
+      }
       return await executor.insert(
         tableWallets,
-        wallet.toMap(),
+        map,
         conflictAlgorithm: ConflictAlgorithm.replace,
       );
     } catch (e) {
@@ -225,10 +305,13 @@ class DatabaseHelper {
     }
   }
 
-  Future<List<WalletModel>> getAllWallets() async {
+  Future<List<WalletModel>> getAllWallets({String? userId}) async {
     try {
       final db = await database;
-      final maps = await db.query(tableWallets, orderBy: 'id ASC');
+      final uid = userId ?? activeUserId;
+      final whereClause = (uid != null && uid.isNotEmpty) ? 'user_id = ? OR user_id IS NULL' : null;
+      final whereArgs = (whereClause != null) ? [uid] : null;
+      final maps = await db.query(tableWallets, where: whereClause, whereArgs: whereArgs, orderBy: 'id ASC');
       return maps.map((map) => WalletModel.fromMap(map)).toList();
     } catch (e) {
       debugPrint('Error getting all wallets: $e');
@@ -313,6 +396,7 @@ class DatabaseHelper {
         'target_amount': transaction.targetAmount,
         'is_recurring': transaction.isRecurring ? 1 : 0,
         'recurring_id': transaction.recurringId,
+        if (activeUserId != null && activeUserId!.isNotEmpty) 'user_id': activeUserId,
       };
 
       return await executor.insert(
@@ -326,23 +410,30 @@ class DatabaseHelper {
     }
   }
 
-  Future<List<TransactionModel>> getAllTransactions({int? walletId}) async {
+  Future<List<TransactionModel>> getAllTransactions({int? walletId, String? userId}) async {
     try {
       final db = await database;
-      final List<Map<String, dynamic>> maps;
-      if (walletId != null) {
-        maps = await db.query(
-          tableTransactions,
-          where: 'wallet_id = ?',
-          whereArgs: [walletId],
-          orderBy: 'date DESC',
-        );
-      } else {
-        maps = await db.query(
-          tableTransactions,
-          orderBy: 'date DESC',
-        );
+      final uid = userId ?? activeUserId;
+      String? whereClause;
+      List<dynamic>? whereArgs;
+
+      if (walletId != null && uid != null && uid.isNotEmpty) {
+        whereClause = 'wallet_id = ? AND (user_id = ? OR user_id IS NULL)';
+        whereArgs = [walletId, uid];
+      } else if (walletId != null) {
+        whereClause = 'wallet_id = ?';
+        whereArgs = [walletId];
+      } else if (uid != null && uid.isNotEmpty) {
+        whereClause = 'user_id = ? OR user_id IS NULL';
+        whereArgs = [uid];
       }
+
+      final maps = await db.query(
+        tableTransactions,
+        where: whereClause,
+        whereArgs: whereArgs,
+        orderBy: 'date DESC',
+      );
       return maps.map((map) => TransactionModel.fromMap(map)).toList();
     } catch (e) {
       debugPrint('Error getting all transactions: $e');
@@ -429,6 +520,7 @@ class DatabaseHelper {
         'phone': person.phone,
         'notes': person.notes,
         'created_at': person.createdAt.toIso8601String(),
+        if (activeUserId != null && activeUserId!.isNotEmpty) 'user_id': activeUserId,
       };
       return await executor.insert(
         tablePersons,
@@ -441,10 +533,13 @@ class DatabaseHelper {
     }
   }
 
-  Future<List<PersonModel>> getAllPersons() async {
+  Future<List<PersonModel>> getAllPersons({String? userId}) async {
     try {
       final db = await database;
-      final maps = await db.query(tablePersons, orderBy: 'name COLLATE NOCASE ASC');
+      final uid = userId ?? activeUserId;
+      final whereClause = (uid != null && uid.isNotEmpty) ? 'user_id = ? OR user_id IS NULL' : null;
+      final whereArgs = (whereClause != null) ? [uid] : null;
+      final maps = await db.query(tablePersons, where: whereClause, whereArgs: whereArgs, orderBy: 'name COLLATE NOCASE ASC');
       return maps.map((m) => PersonModel.fromMap(m)).toList();
     } catch (e) {
       debugPrint('Error getting all persons: $e');
@@ -507,6 +602,7 @@ class DatabaseHelper {
         'created_at': debt.createdAt.toIso8601String(),
         'notes': debt.notes,
         'payments_json': jsonEncode(debt.payments.map((p) => p.toMap()).toList()),
+        if (activeUserId != null && activeUserId!.isNotEmpty) 'user_id': activeUserId,
       };
 
       return await executor.insert(
@@ -520,10 +616,13 @@ class DatabaseHelper {
     }
   }
 
-  Future<List<DebtModel>> getAllDebts() async {
+  Future<List<DebtModel>> getAllDebts({String? userId}) async {
     try {
       final db = await database;
-      final maps = await db.query(tableDebts, orderBy: 'created_at DESC');
+      final uid = userId ?? activeUserId;
+      final whereClause = (uid != null && uid.isNotEmpty) ? 'user_id = ? OR user_id IS NULL' : null;
+      final whereArgs = (whereClause != null) ? [uid] : null;
+      final maps = await db.query(tableDebts, where: whereClause, whereArgs: whereArgs, orderBy: 'created_at DESC');
       return maps.map((m) => DebtModel.fromMap(m)).toList();
     } catch (e) {
       debugPrint('Error getting all debts: $e');
@@ -589,6 +688,7 @@ class DatabaseHelper {
         'is_expense': category.isExpense ? 1 : 0,
         'is_default': category.isDefault ? 1 : 0,
         'budgets_json': jsonEncode(category.monthlyBudgets),
+        if (activeUserId != null && activeUserId!.isNotEmpty) 'user_id': activeUserId,
       };
 
       return await executor.insert(
@@ -602,10 +702,13 @@ class DatabaseHelper {
     }
   }
 
-  Future<List<CategoryModel>> getAllCategories() async {
+  Future<List<CategoryModel>> getAllCategories({String? userId}) async {
     try {
       final db = await database;
-      final maps = await db.query(tableCategories);
+      final uid = userId ?? activeUserId;
+      final whereClause = (uid != null && uid.isNotEmpty) ? 'user_id = ? OR user_id IS NULL' : null;
+      final whereArgs = (whereClause != null) ? [uid] : null;
+      final maps = await db.query(tableCategories, where: whereClause, whereArgs: whereArgs);
       if (maps.isEmpty) {
         return CategoryModel.defaultCategories;
       }
@@ -678,6 +781,7 @@ class DatabaseHelper {
         'is_active': recurring.isActive ? 1 : 0,
         'notes': recurring.notes,
         'created_at': recurring.createdAt.toIso8601String(),
+        if (activeUserId != null && activeUserId!.isNotEmpty) 'user_id': activeUserId,
       };
 
       return await executor.insert(
@@ -691,10 +795,13 @@ class DatabaseHelper {
     }
   }
 
-  Future<List<RecurringTransactionModel>> getAllRecurring() async {
+  Future<List<RecurringTransactionModel>> getAllRecurring({String? userId}) async {
     try {
       final db = await database;
-      final maps = await db.query(tableRecurring, orderBy: 'day_of_month ASC');
+      final uid = userId ?? activeUserId;
+      final whereClause = (uid != null && uid.isNotEmpty) ? 'user_id = ? OR user_id IS NULL' : null;
+      final whereArgs = (whereClause != null) ? [uid] : null;
+      final maps = await db.query(tableRecurring, where: whereClause, whereArgs: whereArgs, orderBy: 'day_of_month ASC');
       return maps.map((m) => RecurringTransactionModel.fromMap(m)).toList();
     } catch (e) {
       debugPrint('Error getting all recurring transactions: $e');
@@ -747,6 +854,46 @@ class DatabaseHelper {
       debugPrint('Error deleting recurring transaction: $e');
       rethrow;
     }
+  }
+
+  // ==========================================
+  // CLOUD SYNC RAW HELPERS
+  // ==========================================
+
+  /// Fetches raw table maps for cloud synchronization
+  Future<List<Map<String, dynamic>>> getRawTableRows(String table, {required String userId}) async {
+    final db = await database;
+    return await db.query(
+      table,
+      where: 'user_id = ? OR user_id IS NULL',
+      whereArgs: [userId],
+    );
+  }
+
+  /// Replaces local table data for a given user during Cloud Restore (Pull)
+  Future<void> replaceUserData(String table, List<Map<String, dynamic>> rows, {required String userId}) async {
+    final db = await database;
+    await db.transaction((txn) async {
+      await txn.delete(table, where: 'user_id = ?', whereArgs: [userId]);
+      for (final row in rows) {
+        final map = Map<String, dynamic>.from(row);
+        map['user_id'] = userId;
+        await txn.insert(table, map, conflictAlgorithm: ConflictAlgorithm.replace);
+      }
+    });
+  }
+
+  /// Clears data belonging to a specific user
+  Future<void> clearUserData(String userId) async {
+    final db = await database;
+    await db.transaction((txn) async {
+      await txn.delete(tableTransactions, where: 'user_id = ?', whereArgs: [userId]);
+      await txn.delete(tableDebts, where: 'user_id = ?', whereArgs: [userId]);
+      await txn.delete(tablePersons, where: 'user_id = ?', whereArgs: [userId]);
+      await txn.delete(tableCategories, where: 'user_id = ?', whereArgs: [userId]);
+      await txn.delete(tableRecurring, where: 'user_id = ?', whereArgs: [userId]);
+      await txn.delete(tableWallets, where: 'user_id = ?', whereArgs: [userId]);
+    });
   }
 
   // ==========================================

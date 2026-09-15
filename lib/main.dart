@@ -8,6 +8,7 @@ import 'providers/security_provider.dart';
 import 'providers/category_provider.dart';
 import 'providers/finance_provider.dart';
 import 'providers/debt_provider.dart';
+import 'providers/auth_provider.dart';
 import 'services/hive_db_service.dart';
 import 'services/data_migration_service.dart';
 import 'services/backup_service.dart';
@@ -44,6 +45,7 @@ Future<void> main() async {
         ChangeNotifierProvider(create: (_) => CategoryProvider()),
         ChangeNotifierProvider(create: (_) => FinanceProvider()),
         ChangeNotifierProvider(create: (_) => DebtProvider()),
+        ChangeNotifierProvider(create: (_) => AuthProvider()),
       ],
       child: const MyFinanceApp(),
     ),

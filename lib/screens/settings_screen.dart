@@ -5,8 +5,10 @@ import '../providers/security_provider.dart';
 import '../providers/finance_provider.dart';
 import '../providers/debt_provider.dart';
 import '../providers/category_provider.dart';
+import '../providers/auth_provider.dart';
 import '../services/backup_service.dart';
 import '../services/database_helper.dart';
+import '../services/cloud_sync_service.dart';
 import '../widgets/confirm_dialog.dart';
 import '../core/constants/app_colors.dart';
 import 'pin_lock_screen.dart';
@@ -14,6 +16,7 @@ import 'change_pin_screen.dart';
 import 'currency_exchange_screen.dart';
 import 'recurring_transactions_screen.dart';
 import 'wallets_screen.dart';
+import 'auth/login_screen.dart';
 import '../widgets/transfer_sheet.dart';
 
 class SettingsScreen extends StatefulWidget {
@@ -25,9 +28,11 @@ class SettingsScreen extends StatefulWidget {
 
 class _SettingsScreenState extends State<SettingsScreen> {
   String? _lastBackupDate;
+  String? _lastCloudSyncDate;
   bool _autoBackupEnabled = true;
   bool _isBackingUp = false;
   bool _isRestoring = false;
+  bool _isCloudSyncing = false;
 
   @override
   void initState() {
@@ -39,10 +44,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final backupService = BackupService();
     final date = await backupService.getLastBackupDate();
     final autoEnabled = await backupService.isAutoBackupEnabled();
+    final syncDate = await CloudSyncService().getLastSyncDate();
     if (mounted) {
       setState(() {
         _lastBackupDate = date;
         _autoBackupEnabled = autoEnabled;
+        _lastCloudSyncDate = syncDate;
       });
     }
   }
@@ -248,6 +255,403 @@ class _SettingsScreenState extends State<SettingsScreen> {
         );
       }
     }
+  }
+
+  Future<void> _uploadToCloud() async {
+    final authProvider = Provider.of<AuthProvider>(context, listen: false);
+    if (!authProvider.isAuthenticated || authProvider.userId == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('يرجى تسجيل الدخول أولاً للتمكن من رفع البيانات إلى السحابة'),
+          backgroundColor: AppColors.expense,
+        ),
+      );
+      return;
+    }
+
+    if (_isCloudSyncing) return;
+    setState(() => _isCloudSyncing = true);
+
+    try {
+      final syncService = CloudSyncService();
+      final result = await syncService.uploadLocalDataToCloud(authProvider.userId!);
+
+      if (mounted) {
+        if (result.success) {
+          final date = await syncService.getLastSyncDate();
+          if (!mounted) return;
+          setState(() {
+            _lastCloudSyncDate = date;
+          });
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Row(
+                children: [
+                  const Icon(Icons.check_circle_rounded, color: Colors.white, size: 20),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      result.message,
+                      style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                    ),
+                  ),
+                ],
+              ),
+              backgroundColor: AppColors.income,
+              duration: const Duration(seconds: 4),
+              behavior: SnackBarBehavior.floating,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+            ),
+          );
+        } else {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(result.message),
+              backgroundColor: AppColors.expense,
+              behavior: SnackBarBehavior.floating,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('حدث خطأ أثناء رفع البيانات: $e'),
+            backgroundColor: AppColors.expense,
+            behavior: SnackBarBehavior.floating,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+          ),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isCloudSyncing = false);
+      }
+    }
+  }
+
+  Future<void> _downloadFromCloud() async {
+    final authProvider = Provider.of<AuthProvider>(context, listen: false);
+    if (!authProvider.isAuthenticated || authProvider.userId == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('يرجى تسجيل الدخول أولاً للتمكن من استعادة البيانات من السحابة'),
+          backgroundColor: AppColors.expense,
+        ),
+      );
+      return;
+    }
+
+    final confirmed = await ConfirmDialog.show(
+      context,
+      title: 'استعادة البيانات من السحابة',
+      content:
+          'تحذير: ستؤدي هذه العملية إلى استبدال كافة البيانات المحلية الحالية بالبيانات المحفوظة في السحابة لهذا الحساب. هل ترغب بالاستمرار؟',
+      confirmLabel: 'استعادة الآن',
+      confirmColor: AppColors.sarColor,
+    );
+
+    if (!confirmed) return;
+
+    if (_isCloudSyncing) return;
+    setState(() => _isCloudSyncing = true);
+
+    try {
+      final syncService = CloudSyncService();
+      final result = await syncService.downloadCloudDataToLocal(authProvider.userId!);
+
+      if (mounted) {
+        if (result.success) {
+          final financeProvider = Provider.of<FinanceProvider>(context, listen: false);
+          final debtProvider = Provider.of<DebtProvider>(context, listen: false);
+          final categoryProvider = Provider.of<CategoryProvider>(context, listen: false);
+
+          await Future.wait([
+            financeProvider.loadAllData(),
+            debtProvider.loadAll(),
+            categoryProvider.loadCategories(),
+          ]);
+
+          final date = await syncService.getLastSyncDate();
+          if (!mounted) return;
+          setState(() {
+            _lastCloudSyncDate = date;
+          });
+
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Row(
+                children: [
+                  const Icon(Icons.check_circle_rounded, color: Colors.white, size: 20),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      result.message,
+                      style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                    ),
+                  ),
+                ],
+              ),
+              backgroundColor: AppColors.income,
+              duration: const Duration(seconds: 4),
+              behavior: SnackBarBehavior.floating,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+            ),
+          );
+        } else {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(result.message),
+              backgroundColor: AppColors.expense,
+              behavior: SnackBarBehavior.floating,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('حدث خطأ أثناء استعادة البيانات: $e'),
+            backgroundColor: AppColors.expense,
+            behavior: SnackBarBehavior.floating,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+          ),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isCloudSyncing = false);
+      }
+    }
+  }
+
+  Future<void> _logout() async {
+    final confirmed = await ConfirmDialog.show(
+      context,
+      title: 'تسجيل الخروج',
+      content: 'هل أنت متأكد من رغبتك في تسجيل الخروج من حسابك السحابي؟',
+      confirmLabel: 'تسجيل خروج',
+      confirmColor: AppColors.expense,
+    );
+    if (confirmed) {
+      if (!mounted) return;
+      final authProvider = Provider.of<AuthProvider>(context, listen: false);
+      await authProvider.signOut();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('تم تسجيل الخروج بنجاح'),
+          backgroundColor: AppColors.income,
+        ),
+      );
+    }
+  }
+
+  Widget _buildCloudSyncCard(BuildContext context, bool isDark) {
+    final authProvider = Provider.of<AuthProvider>(context);
+    final isAuthenticated = authProvider.isAuthenticated;
+    final userEmail = authProvider.userEmail;
+
+    return Card(
+      color: isDark ? AppColors.darkCard : AppColors.lightSurface,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(16),
+        side: BorderSide(color: isDark ? AppColors.darkBorder : AppColors.lightBorder),
+      ),
+      child: Column(
+        children: [
+          if (!isAuthenticated) ...[
+            Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: AppColors.primaryTeal.withValues(alpha: isDark ? 0.15 : 0.08),
+                      shape: BoxShape.circle,
+                    ),
+                    child: const Icon(
+                      Icons.cloud_sync_rounded,
+                      size: 36,
+                      color: AppColors.primaryTeal,
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  const Text(
+                    'المزامنة السحابية غير مفعلة',
+                    style: TextStyle(
+                      fontWeight: FontWeight.bold,
+                      fontSize: 15,
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    'قم بتسجيل الدخول أو إنشاء حساب جديد لحفظ كافة بياناتك المالية على السحابة واستعادتها بسهولة على أي جهاز.',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: isDark ? AppColors.darkTextSecondary : AppColors.lightTextSecondary,
+                      height: 1.5,
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  SizedBox(
+                    width: double.infinity,
+                    height: 44,
+                    child: ElevatedButton.icon(
+                      onPressed: () {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => const LoginScreen(),
+                          ),
+                        );
+                      },
+                      icon: const Icon(Icons.login_rounded, size: 20),
+                      label: const Text(
+                        'تسجيل الدخول / إنشاء حساب',
+                        style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                      ),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: AppColors.primaryTeal,
+                        foregroundColor: Colors.white,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        elevation: 0,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ] else ...[
+            Container(
+              margin: const EdgeInsets.all(12),
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: AppColors.primaryTeal.withValues(alpha: isDark ? 0.12 : 0.07),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: AppColors.primaryTeal.withValues(alpha: 0.25)),
+              ),
+              child: Column(
+                children: [
+                  Row(
+                    children: [
+                      CircleAvatar(
+                        radius: 20,
+                        backgroundColor: AppColors.primaryTeal.withValues(alpha: 0.2),
+                        child: const Icon(Icons.person_rounded, color: AppColors.primaryTeal, size: 22),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              userEmail != null && userEmail.isNotEmpty ? userEmail : 'مستخدم السحابة',
+                              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                            const SizedBox(height: 2),
+                            Row(
+                              children: [
+                                Container(
+                                  width: 8,
+                                  height: 8,
+                                  decoration: const BoxDecoration(
+                                    color: AppColors.income,
+                                    shape: BoxShape.circle,
+                                  ),
+                                ),
+                                const SizedBox(width: 6),
+                                const Text(
+                                  'متصل بالسحابة بأمان',
+                                  style: TextStyle(fontSize: 11, color: AppColors.income, fontWeight: FontWeight.bold),
+                                ),
+                              ],
+                            ),
+                          ],
+                        ),
+                      ),
+                      IconButton(
+                        onPressed: _logout,
+                        tooltip: 'تسجيل الخروج',
+                        icon: const Icon(Icons.logout_rounded, color: AppColors.expense, size: 20),
+                      ),
+                    ],
+                  ),
+                  const Divider(height: 16),
+                  Row(
+                    children: [
+                      const Icon(Icons.history_rounded, size: 16, color: AppColors.primaryTeal),
+                      const SizedBox(width: 6),
+                      Text(
+                        'آخر مزامنة: ${_lastCloudSyncDate != null && _lastCloudSyncDate!.isNotEmpty ? _lastCloudSyncDate! : "لم تتم المزامنة بعد"}',
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: isDark ? AppColors.darkTextSecondary : AppColors.lightTextSecondary,
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+            ListTile(
+              leading: _isCloudSyncing
+                  ? const SizedBox(
+                      width: 24,
+                      height: 24,
+                      child: CircularProgressIndicator(strokeWidth: 2, color: AppColors.primaryTeal),
+                    )
+                  : const Icon(Icons.cloud_upload_rounded, color: AppColors.primaryTeal),
+              title: const Text(
+                'رفع وتحديث البيانات إلى السحابة',
+                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+              ),
+              subtitle: Text(
+                'حفظ جميع العمليات والديون والمحافظ والتصنيفات في قاعدة بيانات Firestore السحابية',
+                style: TextStyle(
+                  fontSize: 11,
+                  color: isDark ? AppColors.darkTextSecondary : AppColors.lightTextSecondary,
+                ),
+              ),
+              trailing: const Icon(Icons.arrow_forward_ios_rounded, size: 14),
+              onTap: _isCloudSyncing ? null : _uploadToCloud,
+            ),
+            Divider(height: 1, color: isDark ? AppColors.darkBorder : AppColors.lightBorder),
+            ListTile(
+              leading: _isCloudSyncing
+                  ? const SizedBox(
+                      width: 24,
+                      height: 24,
+                      child: CircularProgressIndicator(strokeWidth: 2, color: AppColors.sarColor),
+                    )
+                  : const Icon(Icons.cloud_download_rounded, color: AppColors.sarColor),
+              title: const Text(
+                'استعادة البيانات من السحابة',
+                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+              ),
+              subtitle: Text(
+                'تنزيل آخر نسخة سحابية واستبدال البيانات المحلية وتحديث كافة الشاشات فوراً',
+                style: TextStyle(
+                  fontSize: 11,
+                  color: isDark ? AppColors.darkTextSecondary : AppColors.lightTextSecondary,
+                ),
+              ),
+              trailing: const Icon(Icons.arrow_forward_ios_rounded, size: 14),
+              onTap: _isCloudSyncing ? null : _downloadFromCloud,
+            ),
+          ],
+        ],
+      ),
+    );
   }
 
   Widget _buildSectionHeader(BuildContext context, String title, IconData icon) {
@@ -610,7 +1014,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
           const SizedBox(height: 16),
 
-          // 4. Financial Tools Section
+          // 4. Cloud Sync Section (Firebase Firestore)
+          _buildSectionHeader(context, 'المزامنة السحابية (Cloud Sync)', Icons.cloud_sync_rounded),
+          _buildCloudSyncCard(context, isDark),
+
+          const SizedBox(height: 16),
+
+          // 5. Financial Tools Section
           _buildSectionHeader(context, 'الأدوات والمحافظ المالية', Icons.account_balance_wallet_rounded),
           Card(
             color: isDark ? AppColors.darkCard : AppColors.lightSurface,
