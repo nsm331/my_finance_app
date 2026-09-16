@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:path/path.dart';
 import 'package:sqflite/sqflite.dart';
+import 'package:sqflite_common_ffi_web/sqflite_ffi_web.dart';
 
 import '../models/app_currency.dart';
 import '../models/wallet_model.dart';
@@ -50,11 +51,28 @@ class DatabaseHelper {
 
   /// Returns the absolute filesystem path of the SQLite database file
   Future<String> getDatabaseFilePath() async {
+    if (kIsWeb) {
+      return _databaseName;
+    }
     final dbPath = await getDatabasesPath();
     return join(dbPath, _databaseName);
   }
 
   Future<Database> _initDatabase() async {
+    if (kIsWeb) {
+      final factory = databaseFactoryFfiWeb;
+      return await factory.openDatabase(
+        _databaseName,
+        options: OpenDatabaseOptions(
+          version: _databaseVersion,
+          onConfigure: _onConfigure,
+          onCreate: _onCreate,
+          onUpgrade: _onUpgrade,
+          onOpen: _onOpen,
+        ),
+      );
+    }
+
     final dbPath = await getDatabasesPath();
     final path = join(dbPath, _databaseName);
 

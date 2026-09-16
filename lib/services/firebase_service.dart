@@ -27,7 +27,19 @@ class FirebaseService {
   /// If google-services.json is not yet present, catches gracefully and keeps app functional offline.
   static Future<bool> initialize() async {
     try {
-      await Firebase.initializeApp();
+      if (kIsWeb) {
+        await Firebase.initializeApp(
+          options: const FirebaseOptions(
+            apiKey: "AIzaSyCj8PgDljhozoBbbwjQ7eG3lWKG7J7iqQU",
+            appId: "1:382217614763:web:497cc52d928955cd5eceee",
+            messagingSenderId: "382217614763",
+            projectId: "my-finance-app-2d3f7",
+            storageBucket: "my-finance-app-2d3f7.firebasestorage.app",
+          ),
+        );
+      } else {
+        await Firebase.initializeApp();
+      }
       _isInitialized = true;
       debugPrint('[FirebaseService] Firebase successfully initialized.');
       return true;

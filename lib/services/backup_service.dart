@@ -21,6 +21,13 @@ class BackupService {
 
   /// Exports the live SQLite database file (.db) to user storage or share sheet
   Future<({bool success, String message, String? savedPath})> exportDatabaseBackup() async {
+    if (kIsWeb) {
+      return (
+        success: false,
+        message: 'النسخ الاحتياطي المحلي للملفات غير مدعوم على متصفح الويب. يمكنك استخدام المزامنة السحابية لحفظ واسترجاع بياناتك تلقائياً.',
+        savedPath: null,
+      );
+    }
     try {
       final dbPath = await _dbHelper.getDatabaseFilePath();
       final dbFile = File(dbPath);
@@ -110,6 +117,12 @@ class BackupService {
 
   /// Restores the SQLite database from a user-selected .db file
   Future<({bool success, String message})> restoreDatabaseBackup() async {
+    if (kIsWeb) {
+      return (
+        success: false,
+        message: 'استعادة النسخة الاحتياطية من ملف محلي غير مدعومة على متصفح الويب. يمكنك استخدام المزامنة السحابية لمزامنة بياناتك.',
+      );
+    }
     try {
       final result = await FilePicker.platform.pickFiles(
         dialogTitle: 'اختر ملف النسخة الاحتياطية (.db)',
@@ -204,7 +217,7 @@ class BackupService {
   /// Requests Permission.manageExternalStorage (crucial for Android 11+ Scoped Storage)
   /// and Permission.storage (for Android 10 and below).
   Future<bool> requestStoragePermissions() async {
-    if (!Platform.isAndroid) return true;
+    if (kIsWeb || !Platform.isAndroid) return true;
 
     try {
       // 1. Android 11+ (API 30+) Scoped Storage requirement
@@ -234,6 +247,9 @@ class BackupService {
   /// - Android: /storage/emulated/0/Documents/ميزانيتي
   /// - iOS / fallback: getApplicationDocumentsDirectory() + /ميزانيتي
   Future<Directory> getDedicatedAutoBackupDirectory() async {
+    if (kIsWeb) {
+      throw UnsupportedError('Auto backup directory is not supported on web.');
+    }
     Directory targetDir;
     if (Platform.isAndroid) {
       targetDir = Directory(androidDedicatedBackupPath);
@@ -265,6 +281,10 @@ class BackupService {
 
   /// Automatically creates a daily .db backup in the dedicated "ميزانيتي" folder
   Future<bool> checkAndRunDailyBackup() async {
+    if (kIsWeb) {
+      debugPrint('[BackupService] Daily local file auto-backup is not applicable on Web.');
+      return false;
+    }
     try {
       final isEnabled = await isAutoBackupEnabled();
       if (!isEnabled) {
