@@ -77,6 +77,7 @@ class SecurityService {
 
   /// Check if device supports hardware biometrics and has enrolled biometrics
   Future<bool> isDeviceBiometricSupported() async {
+    if (kIsWeb) return false;
     try {
       final isSupported = await _localAuth.isDeviceSupported();
       final canCheck = await _localAuth.canCheckBiometrics;
@@ -91,6 +92,7 @@ class SecurityService {
 
   /// Get list of available biometrics on device
   Future<List<BiometricType>> getAvailableBiometrics() async {
+    if (kIsWeb) return [];
     try {
       return await _localAuth.getAvailableBiometrics();
     } catch (e) {
@@ -102,6 +104,9 @@ class SecurityService {
   /// Authenticate user via Biometrics (Fingerprint / Face)
   /// Returns a record with `success` and optional `errorMessage`
   Future<({bool success, String? errorMessage})> authenticateWithBiometricsDetails() async {
+    if (kIsWeb) {
+      return (success: false, errorMessage: 'المصادقة بالبصمة غير مدعومة على متصفح الويب');
+    }
     try {
       final isSupported = await _localAuth.isDeviceSupported();
       if (!isSupported) {
