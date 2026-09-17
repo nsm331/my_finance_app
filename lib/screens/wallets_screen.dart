@@ -9,7 +9,9 @@ import '../core/utils/icon_helper.dart';
 import '../widgets/transfer_sheet.dart';
 
 class WalletsScreen extends StatefulWidget {
-  const WalletsScreen({super.key});
+  final bool isEmbedded;
+
+  const WalletsScreen({super.key, this.isEmbedded = false});
 
   @override
   State<WalletsScreen> createState() => _WalletsScreenState();
@@ -429,6 +431,106 @@ class _WalletsScreenState extends State<WalletsScreen> {
     final financeProvider = Provider.of<FinanceProvider>(context);
     final wallets = financeProvider.wallets;
 
+    final content = Column(
+      children: [
+        Expanded(
+          child: wallets.isEmpty
+              ? Center(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(
+                        Icons.account_balance_wallet_outlined,
+                        size: 64,
+                        color: isDark ? AppColors.darkTextSecondary : AppColors.lightTextSecondary,
+                      ),
+                      const SizedBox(height: 16),
+                      const Text(
+                        'لا توجد محافظ مسجلة',
+                        style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                      ),
+                      const SizedBox(height: 16),
+                      ElevatedButton.icon(
+                        onPressed: () => _showWalletFormSheet(),
+                        icon: const Icon(Icons.add_rounded),
+                        label: const Text('إضافة محفظة الآن'),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: AppColors.primaryTeal,
+                          foregroundColor: Colors.white,
+                        ),
+                      ),
+                    ],
+                  ),
+                )
+              : ListView.builder(
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+                  physics: const BouncingScrollPhysics(),
+                  itemCount: wallets.length,
+                  itemBuilder: (context, index) {
+                    final wallet = wallets[index];
+                    final balances = financeProvider.getWalletBalances(wallet.id ?? -1);
+
+                    return _buildWalletCard(
+                      context: context,
+                      wallet: wallet,
+                      balances: balances,
+                      isDark: isDark,
+                      financeProvider: financeProvider,
+                    );
+                  },
+                ),
+        ),
+        Container(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: isDark ? AppColors.darkCard : AppColors.lightSurface,
+            border: Border(
+              top: BorderSide(color: isDark ? AppColors.darkBorder : AppColors.lightBorder),
+            ),
+          ),
+          child: Row(
+            children: [
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: () => _showWalletFormSheet(),
+                  icon: const Icon(Icons.add_rounded, color: AppColors.primaryTeal),
+                  label: const Text(
+                    'محفظة جديدة',
+                    style: TextStyle(fontWeight: FontWeight.bold, color: AppColors.primaryTeal),
+                  ),
+                  style: OutlinedButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                    side: const BorderSide(color: AppColors.primaryTeal),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: ElevatedButton.icon(
+                  onPressed: () => TransferSheet.show(context),
+                  icon: const Icon(Icons.sync_alt_rounded, color: Colors.white),
+                  label: const Text(
+                    'تحويل بين المحافظ',
+                    style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white),
+                  ),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AppColors.primaryTeal,
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+
+    if (widget.isEmbedded) {
+      return content;
+    }
+
     return Scaffold(
       appBar: AppBar(
         title: const Text('إدارة المحافظ والحسابات'),
@@ -445,95 +547,7 @@ class _WalletsScreenState extends State<WalletsScreen> {
           ),
         ],
       ),
-      body: wallets.isEmpty
-          ? Center(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Icon(
-                    Icons.account_balance_wallet_outlined,
-                    size: 64,
-                    color: isDark ? AppColors.darkTextSecondary : AppColors.lightTextSecondary,
-                  ),
-                  const SizedBox(height: 16),
-                  const Text(
-                    'لا توجد محافظ مسجلة',
-                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-                  ),
-                  const SizedBox(height: 16),
-                  ElevatedButton.icon(
-                    onPressed: () => _showWalletFormSheet(),
-                    icon: const Icon(Icons.add_rounded),
-                    label: const Text('إضافة محفظة الآن'),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: AppColors.primaryTeal,
-                      foregroundColor: Colors.white,
-                    ),
-                  ),
-                ],
-              ),
-            )
-          : ListView.builder(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
-              physics: const BouncingScrollPhysics(),
-              itemCount: wallets.length,
-              itemBuilder: (context, index) {
-                final wallet = wallets[index];
-                final balances = financeProvider.getWalletBalances(wallet.id ?? -1);
-
-                return _buildWalletCard(
-                  context: context,
-                  wallet: wallet,
-                  balances: balances,
-                  isDark: isDark,
-                  financeProvider: financeProvider,
-                );
-              },
-            ),
-      bottomNavigationBar: Container(
-        padding: const EdgeInsets.all(16),
-        decoration: BoxDecoration(
-          color: isDark ? AppColors.darkCard : AppColors.lightSurface,
-          border: Border(
-            top: BorderSide(color: isDark ? AppColors.darkBorder : AppColors.lightBorder),
-          ),
-        ),
-        child: Row(
-          children: [
-            Expanded(
-              child: OutlinedButton.icon(
-                onPressed: () => _showWalletFormSheet(),
-                icon: const Icon(Icons.add_rounded, color: AppColors.primaryTeal),
-                label: const Text(
-                  'محفظة جديدة',
-                  style: TextStyle(fontWeight: FontWeight.bold, color: AppColors.primaryTeal),
-                ),
-                style: OutlinedButton.styleFrom(
-                  padding: const EdgeInsets.symmetric(vertical: 14),
-                  side: const BorderSide(color: AppColors.primaryTeal),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-                ),
-              ),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: ElevatedButton.icon(
-                onPressed: () => TransferSheet.show(context),
-                icon: const Icon(Icons.sync_alt_rounded, color: Colors.white),
-                label: const Text(
-                  'تحويل بين المحافظ',
-                  style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white),
-                ),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: AppColors.primaryTeal,
-                  padding: const EdgeInsets.symmetric(vertical: 14),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
+      body: content,
     );
   }
 

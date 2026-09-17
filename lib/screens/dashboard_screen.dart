@@ -15,17 +15,18 @@ import 'add_edit_debt_screen.dart';
 import 'categories_budget_screen.dart';
 import 'currency_exchange_screen.dart';
 import 'recurring_transactions_screen.dart';
-import 'wallets_screen.dart';
 import '../widgets/transfer_sheet.dart';
 
 class DashboardScreen extends StatefulWidget {
   final VoidCallback? onNavigateToTransactions;
   final VoidCallback? onNavigateToDebts;
+  final VoidCallback? onNavigateToWallets;
 
   const DashboardScreen({
     super.key,
     this.onNavigateToTransactions,
     this.onNavigateToDebts,
+    this.onNavigateToWallets,
   });
 
   @override
@@ -129,29 +130,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
       return (spent / budget) >= 0.8; // Over 80% or exceeded
     }).toList();
 
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('لوحة التحكم المالية'),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.sync_alt_rounded),
-            tooltip: 'تحويل بين المحافظ',
-            onPressed: () => TransferSheet.show(context),
-          ),
-          IconButton(
-            icon: const Icon(Icons.account_balance_wallet_rounded),
-            tooltip: 'إدارة المحافظ والحسابات',
-            onPressed: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(builder: (_) => const WalletsScreen()),
-              );
-            },
-          ),
-        ],
-      ),
-      body: RefreshIndicator(
-        onRefresh: () async {
+    return RefreshIndicator(
+      onRefresh: () async {
           await financeProvider.loadAllData();
           await debtProvider.loadAll();
           await categoryProvider.loadCategories();
@@ -438,7 +418,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
             const SizedBox(height: 24),
           ],
         ),
-      ),
-    );
+      );
   }
 }

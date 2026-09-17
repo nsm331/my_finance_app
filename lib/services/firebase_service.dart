@@ -34,6 +34,7 @@ class FirebaseService {
             appId: "1:382217614763:web:497cc52d928955cd5eceee",
             messagingSenderId: "382217614763",
             projectId: "my-finance-app-2d3f7",
+            authDomain: "my-finance-app-2d3f7.firebaseapp.com",
             storageBucket: "my-finance-app-2d3f7.firebasestorage.app",
           ),
         );

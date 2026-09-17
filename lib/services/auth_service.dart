@@ -1,7 +1,11 @@
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
+import 'package:google_sign_in/google_sign_in.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'firebase_service.dart';
+
+/// Result record returned from all AuthService operations.
+typedef AuthResult = ({bool success, String? message, User? user});
 
 class AuthService {
   static const String keyAuthUid = 'auth_user_id';
@@ -26,14 +30,18 @@ class AuthService {
     }
   }
 
-  /// Current user ID (falls back to local cached ID in offline situations)
+  /// Current user ID (Firebase UID)
   String? get currentUserId => currentUser?.uid;
 
-  /// Returns true if a user is currently logged in
+  /// Returns true if a user is currently logged in via Firebase
   bool get isLoggedIn => currentUser != null;
 
+  // ─────────────────────────────────────────────────────────────────────────
+  // Email / Password
+  // ─────────────────────────────────────────────────────────────────────────
+
   /// Sign In with Email and Password
-  Future<({bool success, String? message, User? user})> signIn({
+  Future<AuthResult> signIn({
     required String email,
     required String password,
   }) async {
@@ -66,12 +74,12 @@ class AuthService {
       return (success: false, message: _mapFirebaseError(e.code), user: null);
     } catch (e) {
       debugPrint('[AuthService] signIn error: $e');
-      return (success: false, message: 'حدث خطأ أثناء تسجيل الدخول: $e', user: null);
+      return (success: false, message: 'حدث خطأ أثناء تسجيل الدخول', user: null);
     }
   }
 
   /// Sign Up with Email and Password
-  Future<({bool success, String? message, User? user})> signUp({
+  Future<AuthResult> signUp({
     required String email,
     required String password,
   }) async {
@@ -104,15 +112,114 @@ class AuthService {
       return (success: false, message: _mapFirebaseError(e.code), user: null);
     } catch (e) {
       debugPrint('[AuthService] signUp error: $e');
-      return (success: false, message: 'حدث خطأ أثناء إنشاء الحساب: $e', user: null);
+      return (success: false, message: 'حدث خطأ أثناء إنشاء الحساب', user: null);
     }
   }
 
-  /// Sign Out
+  // ─────────────────────────────────────────────────────────────────────────
+  // Google Sign-In
+  // ─────────────────────────────────────────────────────────────────────────
+
+  /// Sign In with Google OAuth.
+  /// Returns a result with [success], [message], and the Firebase [user].
+  Future<AuthResult> signInWithGoogle() async {
+    try {
+      if (!FirebaseService.isInitialized) {
+        final initOk = await FirebaseService.initialize();
+        if (!initOk) {
+          return (
+            success: false,
+            message: 'خدمة Firebase غير مفعلة، يرجى التأكد من إضافة google-services.json',
+            user: null,
+          );
+        }
+      }
+
+      User? user;
+
+      if (kIsWeb) {
+        // Web flow: use Firebase's native popup provider
+        final GoogleAuthProvider googleProvider = GoogleAuthProvider();
+        googleProvider.addScope('email');
+        googleProvider.addScope('profile');
+        final UserCredential userCredential = await _auth.signInWithPopup(googleProvider);
+        user = userCredential.user;
+      } else {
+        // Mobile flow: use GoogleSignIn package
+        final GoogleSignIn googleSignIn = GoogleSignIn();
+        final GoogleSignInAccount? googleUser = await googleSignIn.signIn();
+
+        if (googleUser == null) {
+          return (
+            success: false,
+            message: 'تم إلغاء تسجيل الدخول عبر Google',
+            user: null,
+          );
+        }
+
+        final GoogleSignInAuthentication googleAuth = await googleUser.authentication;
+        final credential = GoogleAuthProvider.credential(
+          accessToken: googleAuth.accessToken,
+          idToken: googleAuth.idToken,
+        );
+
+        final userCredential = await _auth.signInWithCredential(credential);
+        user = userCredential.user;
+      }
+
+      if (user != null) {
+        await _saveUserLocally(user.uid, user.email ?? '');
+        debugPrint('[AuthService] Google Sign-In success: ${user.email}');
+        return (
+          success: true,
+          message: 'تم تسجيل الدخول بـ Google بنجاح',
+          user: user,
+        );
+      }
+
+      return (success: false, message: 'فشل استرجاع بيانات حساب Google', user: null);
+    } on FirebaseAuthException catch (e) {
+      debugPrint('[AuthService] signInWithGoogle FirebaseAuthException: ${e.code}');
+      return (success: false, message: _mapFirebaseError(e.code), user: null);
+    } catch (e) {
+      debugPrint('[AuthService] signInWithGoogle error: $e');
+      // Handle common non-Firebase errors
+      final errorStr = e.toString().toLowerCase();
+      if (errorStr.contains('network') || errorStr.contains('socket')) {
+        return (
+          success: false,
+          message: 'تعذر الاتصال بالشبكة، يرجى التحقق من اتصال الإنترنت',
+          user: null,
+        );
+      }
+      return (
+        success: false,
+        message: 'حدث خطأ أثناء تسجيل الدخول عبر Google',
+        user: null,
+      );
+    }
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Sign Out
+  // ─────────────────────────────────────────────────────────────────────────
+
+  /// Signs out from Firebase and optionally from Google Sign-In.
   Future<void> signOut() async {
     try {
       if (FirebaseService.isInitialized) {
         await _auth.signOut();
+        // Also sign out from Google if on mobile and session was Google-based
+        if (!kIsWeb) {
+          try {
+            final googleSignIn = GoogleSignIn();
+            if (await googleSignIn.isSignedIn()) {
+              await googleSignIn.signOut();
+            }
+          } catch (_) {
+            // Google sign out failure is non-critical
+          }
+        }
       }
       await _clearUserLocally();
       debugPrint('[AuthService] User signed out and local cache cleared.');
@@ -120,6 +227,10 @@ class AuthService {
       debugPrint('[AuthService] Error signing out: $e');
     }
   }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Local Persistence Helpers
+  // ─────────────────────────────────────────────────────────────────────────
 
   /// Get cached User ID from local preferences
   static Future<String?> getCachedUserId() async {
@@ -161,6 +272,10 @@ class AuthService {
     }
   }
 
+  // ─────────────────────────────────────────────────────────────────────────
+  // Error Mapping
+  // ─────────────────────────────────────────────────────────────────────────
+
   /// Translate Firebase error codes to user-friendly Arabic text
   static String getArabicErrorMessage(String code) {
     switch (code) {
@@ -180,6 +295,20 @@ class AuthService {
         return 'تم حظر المحاولات مؤقتاً لكثرة الطلبات، يرجى الانتظار قليلاً';
       case 'invalid-credential':
         return 'البريد الإلكتروني أو كلمة المرور غير صحيحة';
+      case 'account-exists-with-different-credential':
+        return 'يوجد حساب مسجل بهذا البريد بطريقة تسجيل دخول مختلفة';
+      case 'google-sign-in-cancelled':
+        return 'تم إلغاء تسجيل الدخول عبر Google';
+      case 'popup-closed-by-user':
+        return 'تم إغلاق نافذة تسجيل الدخول';
+      case 'cancelled-popup-request':
+        return 'تم إلغاء طلب تسجيل الدخول';
+      case 'popup-blocked':
+        return 'قام المتصفح بحظر نافذة تسجيل الدخول، يرجى السماح بالنوافذ المنبثقة (Popups)';
+      case 'unauthorized-domain':
+        return 'هذا النطاق غير مصرح به في إعدادات Firebase Authentication';
+      case 'operation-not-allowed':
+        return 'تسجيل الدخول عبر Google غير مفعّل في لوحة تحكم Firebase';
       default:
         return 'حدث خطأ في المصادقة ($code)';
     }

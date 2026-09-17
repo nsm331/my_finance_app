@@ -5,6 +5,7 @@ import '../models/recurring_transaction_model.dart';
 import '../models/wallet_model.dart';
 import '../models/app_currency.dart';
 import '../services/database_helper.dart';
+import '../services/cloud_sync_service.dart';
 
 class FinanceProvider extends ChangeNotifier {
   final DatabaseHelper _dbHelper;
@@ -75,6 +76,9 @@ class FinanceProvider extends ChangeNotifier {
     _transactions.insert(0, txToSave);
     _transactions.sort((a, b) => b.date.compareTo(a.date));
     notifyListeners();
+
+    // Push to Firestore in real-time
+    CloudSyncService().pushTransaction(txToSave);
   }
 
   Future<void> updateTransaction(TransactionModel transaction) async {
@@ -85,6 +89,9 @@ class FinanceProvider extends ChangeNotifier {
       _transactions.sort((a, b) => b.date.compareTo(a.date));
       notifyListeners();
     }
+
+    // Push to Firestore in real-time
+    CloudSyncService().pushTransaction(transaction);
   }
 
   Future<void> deleteTransaction(String id) async {
@@ -114,6 +121,9 @@ class FinanceProvider extends ChangeNotifier {
     await _dbHelper.deleteTransaction(id);
     _transactions.removeWhere((t) => t.id == id);
     notifyListeners();
+
+    // Push deletion to Firestore in real-time
+    CloudSyncService().deleteTransactionFromCloud(id);
   }
 
   // ================= Currency Transfer & Exchange =================
@@ -192,6 +202,10 @@ class FinanceProvider extends ChangeNotifier {
     _transactions.sort((a, b) => b.date.compareTo(a.date));
 
     notifyListeners();
+
+    // Push both transfer transactions to Firestore in real-time
+    CloudSyncService().pushTransaction(outTx);
+    CloudSyncService().pushTransaction(inTx);
   }
 
   /// Deletes both parts of a linked transfer pair
@@ -199,6 +213,7 @@ class FinanceProvider extends ChangeNotifier {
     final toDelete = _transactions.where((t) => t.transferId == transferId).toList();
     for (final tx in toDelete) {
       await _dbHelper.deleteTransaction(tx.id);
+      CloudSyncService().deleteTransactionFromCloud(tx.id);
     }
     _transactions.removeWhere((t) => t.transferId == transferId);
     notifyListeners();
@@ -434,6 +449,7 @@ class FinanceProvider extends ChangeNotifier {
 
         await _dbHelper.insertTransaction(newTx);
         _transactions.insert(0, newTx);
+        CloudSyncService().pushTransaction(newTx);
 
         // Update last processed date
         final updatedRecurring = recurring.copyWith(lastProcessedDate: now);

@@ -29,6 +29,50 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
     super.dispose();
   }
 
+  Future<void> _exportPdf(BuildContext context, List<TransactionModel> filteredList) async {
+    final result = await ReportDateRangeDialog.show(context);
+    if (result == null || !context.mounted) return;
+
+    List<TransactionModel> transactionsToExport;
+    DateTime? exportStartDate;
+    DateTime? exportEndDate;
+
+    if (result.isAll) {
+      transactionsToExport = filteredList;
+    } else if (result.startDate != null && result.endDate != null) {
+      exportStartDate = result.startDate;
+      exportEndDate = result.endDate;
+      transactionsToExport = filteredList.where((t) {
+        final tDate = DateTime(t.date.year, t.date.month, t.date.day);
+        final sDate = DateTime(result.startDate!.year, result.startDate!.month, result.startDate!.day);
+        final eDate = DateTime(result.endDate!.year, result.endDate!.month, result.endDate!.day);
+        return tDate.isAtSameMomentAs(sDate) ||
+               tDate.isAtSameMomentAs(eDate) ||
+               (tDate.isAfter(sDate) && tDate.isBefore(eDate));
+      }).toList();
+    } else {
+      transactionsToExport = filteredList;
+    }
+
+    if (transactionsToExport.isEmpty) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('لا توجد عمليات لتصديرها في هذا النطاق')),
+        );
+      }
+      return;
+    }
+
+    if (context.mounted) {
+      await PdfStatementService.showTransactionExportBottomSheet(
+        context: context,
+        transactions: transactionsToExport,
+        startDate: exportStartDate,
+        endDate: exportEndDate,
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
@@ -46,92 +90,60 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
     );
 
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('سجل العمليات المالية'),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.picture_as_pdf_rounded),
-            tooltip: 'تصدير وطباعة PDF',
-            onPressed: () async {
-              final result = await ReportDateRangeDialog.show(context);
-              if (result == null || !context.mounted) return;
-
-              List<TransactionModel> transactionsToExport;
-              DateTime? exportStartDate;
-              DateTime? exportEndDate;
-
-              if (result.isAll) {
-                transactionsToExport = filteredList;
-              } else if (result.startDate != null && result.endDate != null) {
-                exportStartDate = result.startDate;
-                exportEndDate = result.endDate;
-                transactionsToExport = filteredList.where((t) {
-                  final tDate = DateTime(t.date.year, t.date.month, t.date.day);
-                  final sDate = DateTime(result.startDate!.year, result.startDate!.month, result.startDate!.day);
-                  final eDate = DateTime(result.endDate!.year, result.endDate!.month, result.endDate!.day);
-                  return tDate.isAtSameMomentAs(sDate) ||
-                         tDate.isAtSameMomentAs(eDate) ||
-                         (tDate.isAfter(sDate) && tDate.isBefore(eDate));
-                }).toList();
-              } else {
-                transactionsToExport = filteredList;
-              }
-
-              if (transactionsToExport.isEmpty) {
-                if (context.mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('لا توجد عمليات لتصديرها في هذا النطاق')),
-                  );
-                }
-                return;
-              }
-
-              if (context.mounted) {
-                await PdfStatementService.showTransactionExportBottomSheet(
-                  context: context,
-                  transactions: transactionsToExport,
-                  startDate: exportStartDate,
-                  endDate: exportEndDate,
-                );
-              }
-            },
-          ),
-        ],
-      ),
       body: Column(
         children: [
-          // Search & Filter Header
-          Container(
-            padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
-            decoration: BoxDecoration(
-              color: isDark ? AppColors.darkCard : AppColors.lightSurface,
-              border: Border(
-                bottom: BorderSide(
-                  color: isDark ? AppColors.darkBorder : AppColors.lightBorder,
-                ),
+        // Search & Filter Header
+        Container(
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
+          decoration: BoxDecoration(
+            color: isDark ? AppColors.darkCard : AppColors.lightSurface,
+            border: Border(
+              bottom: BorderSide(
+                color: isDark ? AppColors.darkBorder : AppColors.lightBorder,
               ),
             ),
-            child: Column(
-              children: [
-                // Search Bar
-                TextField(
-                  controller: _searchController,
-                  onChanged: (_) => setState(() {}),
-                  decoration: InputDecoration(
-                    hintText: 'ابحث عن عملية، تصنيف، ملاحظة...',
-                    prefixIcon: const Icon(Icons.search_rounded, size: 20),
-                    suffixIcon: _searchController.text.isNotEmpty
-                        ? IconButton(
-                            icon: const Icon(Icons.clear, size: 18),
-                            onPressed: () {
-                              _searchController.clear();
-                              setState(() {});
-                            },
-                          )
-                        : null,
-                    contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+          ),
+          child: Column(
+            children: [
+              // Search Bar + PDF Export Button
+              Row(
+                children: [
+                  Expanded(
+                    child: TextField(
+                      controller: _searchController,
+                      onChanged: (_) => setState(() {}),
+                      decoration: InputDecoration(
+                        hintText: 'ابحث عن عملية، تصنيف، ملاحظة...',
+                        prefixIcon: const Icon(Icons.search_rounded, size: 20),
+                        suffixIcon: _searchController.text.isNotEmpty
+                            ? IconButton(
+                                icon: const Icon(Icons.clear, size: 18),
+                                onPressed: () {
+                                  _searchController.clear();
+                                  setState(() {});
+                                },
+                              )
+                            : null,
+                        contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                      ),
+                    ),
                   ),
-                ),
+                  const SizedBox(width: 8),
+                  IconButton(
+                    icon: const Icon(Icons.picture_as_pdf_rounded, color: AppColors.primaryTeal),
+                    tooltip: 'تصدير وطباعة PDF',
+                    style: IconButton.styleFrom(
+                      backgroundColor: AppColors.primaryTeal.withValues(alpha: isDark ? 0.2 : 0.1),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        side: BorderSide(color: AppColors.primaryTeal.withValues(alpha: 0.3)),
+                      ),
+                      padding: const EdgeInsets.all(12),
+                    ),
+                    onPressed: () => _exportPdf(context, filteredList),
+                  ),
+                ],
+              ),
 
                 const SizedBox(height: 12),
 
@@ -313,6 +325,7 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
             ),
           );
         },
+        tooltip: 'إضافة عملية جديدة',
         child: const Icon(Icons.add_rounded, size: 28),
       ),
     );

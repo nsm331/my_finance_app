@@ -128,85 +128,134 @@ class _DebtsScreenState extends State<DebtsScreen> with SingleTickerProviderStat
     );
   }
 
+  Future<void> _exportPdf(BuildContext context, DebtProvider debtProvider) async {
+    if (debtProvider.debts.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('لا توجد ديون مسجلة لتصديرها')),
+      );
+      return;
+    }
+    await PdfStatementService.showComprehensiveDebtsExportBottomSheet(
+      context: context,
+      debts: debtProvider.debts,
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final debtProvider = Provider.of<DebtProvider>(context);
 
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('إدارة الديون وسجل الأشخاص'),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.picture_as_pdf_rounded),
-            tooltip: 'تصدير وطباعة كشف الديون',
-            onPressed: () async {
-              if (debtProvider.debts.isEmpty) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('لا توجد ديون مسجلة لتصديرها')),
-                );
-                return;
-              }
-              await PdfStatementService.showComprehensiveDebtsExportBottomSheet(
-                context: context,
-                debts: debtProvider.debts,
-              );
-            },
-          ),
-          IconButton(
-            icon: const Icon(Icons.person_add_rounded),
-            tooltip: 'إضافة شخص جديد',
-            onPressed: _showAddNewPersonDialog,
-          ),
-        ],
-        bottom: TabBar(
-          controller: _tabController,
-          indicatorColor: AppColors.primaryTeal,
-          labelColor: AppColors.primaryTeal,
-          unselectedLabelColor: isDark ? AppColors.darkTextSecondary : AppColors.lightTextSecondary,
-          labelStyle: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12),
-          isScrollable: true,
-          tabs: [
-            Tab(text: 'سجل الأشخاص (${debtProvider.persons.length})'),
-            const Tab(text: 'ديون لي (مستحقات)'),
-            const Tab(text: 'ديون علي (التزامات)'),
-            const Tab(text: 'الأرشيف والمسددة'),
-          ],
-        ),
-      ),
       body: Column(
         children: [
-          // Filter & Search bar
-          Container(
-            padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
-            decoration: BoxDecoration(
-              color: isDark ? AppColors.darkCard : AppColors.lightSurface,
-              border: Border(
-                bottom: BorderSide(
-                  color: isDark ? AppColors.darkBorder : AppColors.lightBorder,
-                ),
+        // TabBar
+        Container(
+          color: isDark ? AppColors.darkCard : AppColors.lightSurface,
+          child: TabBar(
+            controller: _tabController,
+            indicatorColor: AppColors.primaryTeal,
+            labelColor: AppColors.primaryTeal,
+            unselectedLabelColor: isDark ? AppColors.darkTextSecondary : AppColors.lightTextSecondary,
+            labelStyle: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12),
+            isScrollable: true,
+            tabs: [
+              Tab(text: 'سجل الأشخاص (${debtProvider.persons.length})'),
+              const Tab(text: 'ديون لي (مستحقات)'),
+              const Tab(text: 'ديون علي (التزامات)'),
+              const Tab(text: 'الأرشيف والمسددة'),
+            ],
+          ),
+        ),
+        // Filter & Search bar
+        Container(
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
+          decoration: BoxDecoration(
+            color: isDark ? AppColors.darkCard : AppColors.lightSurface,
+            border: Border(
+              bottom: BorderSide(
+                color: isDark ? AppColors.darkBorder : AppColors.lightBorder,
               ),
             ),
-            child: Column(
-              children: [
-                TextField(
-                  controller: _searchController,
-                  onChanged: (_) => setState(() {}),
-                  decoration: InputDecoration(
-                    hintText: 'ابحث باسم الشخص أو الهاتف أو الملاحظات...',
-                    prefixIcon: const Icon(Icons.search_rounded, size: 20),
-                    suffixIcon: _searchController.text.isNotEmpty
-                        ? IconButton(
-                            icon: const Icon(Icons.clear, size: 18),
-                            onPressed: () {
-                              _searchController.clear();
-                              setState(() {});
-                            },
-                          )
-                        : null,
-                    contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+          ),
+          child: Column(
+            children: [
+              Row(
+                children: [
+                  Expanded(
+                    child: TextField(
+                      controller: _searchController,
+                      onChanged: (_) => setState(() {}),
+                      decoration: InputDecoration(
+                        hintText: 'ابحث باسم الشخص أو الهاتف أو الملاحظات...',
+                        prefixIcon: const Icon(Icons.search_rounded, size: 20),
+                        suffixIcon: _searchController.text.isNotEmpty
+                            ? IconButton(
+                                icon: const Icon(Icons.clear, size: 18),
+                                onPressed: () {
+                                  _searchController.clear();
+                                  setState(() {});
+                                },
+                              )
+                            : null,
+                        contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                      ),
+                    ),
                   ),
-                ),
+                  const SizedBox(width: 8),
+                  IconButton(
+                    icon: const Icon(Icons.picture_as_pdf_rounded, color: AppColors.primaryTeal),
+                    tooltip: 'تصدير كشف الديون PDF',
+                    style: IconButton.styleFrom(
+                      backgroundColor: AppColors.primaryTeal.withValues(alpha: isDark ? 0.2 : 0.1),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        side: BorderSide(color: AppColors.primaryTeal.withValues(alpha: 0.3)),
+                      ),
+                      padding: const EdgeInsets.all(12),
+                    ),
+                    onPressed: () => _exportPdf(context, debtProvider),
+                  ),
+                  const SizedBox(width: 6),
+                  IconButton(
+                    icon: const Icon(Icons.person_add_rounded, color: Colors.white),
+                    tooltip: 'إضافة شخص جديد',
+                    style: IconButton.styleFrom(
+                      backgroundColor: AppColors.primaryTeal,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      padding: const EdgeInsets.all(12),
+                    ),
+                    onPressed: _showAddNewPersonDialog,
+                  ),
+                  const SizedBox(width: 6),
+                  IconButton(
+                    icon: const Icon(Icons.add_rounded, color: Colors.white),
+                    tooltip: 'تسجيل دين جديد',
+                    style: IconButton.styleFrom(
+                      backgroundColor: AppColors.income,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      padding: const EdgeInsets.all(12),
+                    ),
+                    onPressed: () {
+                      final activeIndex = _tabController.index;
+                      final initialType = activeIndex == 2 ? DebtType.onMe : DebtType.forMe;
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => AddEditDebtScreen(
+                            initialCurrency: _selectedCurrencyFilter,
+                            initialDebtType: initialType,
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+                ],
+              ),
 
                 const SizedBox(height: 10),
 

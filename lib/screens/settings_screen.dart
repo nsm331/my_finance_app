@@ -455,9 +455,32 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
   }
 
+  /// Exits Guest Mode and returns to LoginScreen
+  Future<void> _exitGuestMode() async {
+    final confirmed = await ConfirmDialog.show(
+      context,
+      title: 'خروج من وضع الضيف',
+      content:
+          'سيتم إعادتك إلى شاشة تسجيل الدخول. بيانات وضع الضيف المحلية ستظل محفوظة على الجهاز. هل ترغب بالمتابعة؟',
+      confirmLabel: 'خروج وتسجيل الدخول',
+      confirmColor: AppColors.primaryTeal,
+    );
+    if (!confirmed || !mounted) return;
+
+    final authProvider = Provider.of<AuthProvider>(context, listen: false);
+    await authProvider.exitGuestMode();
+
+    if (!mounted) return;
+    Navigator.of(context).pushAndRemoveUntil(
+      MaterialPageRoute(builder: (_) => const LoginScreen()),
+      (route) => false,
+    );
+  }
+
   Widget _buildCloudSyncCard(BuildContext context, bool isDark) {
     final authProvider = Provider.of<AuthProvider>(context);
     final isAuthenticated = authProvider.isAuthenticated;
+    final isGuest = authProvider.isGuestMode;
     final userEmail = authProvider.userEmail;
 
     return Card(
@@ -468,7 +491,100 @@ class _SettingsScreenState extends State<SettingsScreen> {
       ),
       child: Column(
         children: [
-          if (!isAuthenticated) ...[
+          // ── GUEST MODE ── show warning banner + exit button only
+          if (isGuest) ...[
+            Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  // Warning Banner
+                  Container(
+                    padding: const EdgeInsets.all(14),
+                    decoration: BoxDecoration(
+                      color: Colors.amber.withValues(alpha: isDark ? 0.18 : 0.12),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: Colors.amber.withValues(alpha: 0.45)),
+                    ),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Icon(Icons.warning_amber_rounded, color: Colors.amber, size: 26),
+                        const SizedBox(width: 12),
+                        const Expanded(
+                          child: Text(
+                            'المزامنة السحابية غير متاحة في وضع الضيف. يرجى إنشاء حساب لحماية بياناتك.',
+                            style: TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w600,
+                              height: 1.5,
+                              color: Colors.amber,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+
+                  const SizedBox(height: 16),
+
+                  // Guest mode indicator chip
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+                        decoration: BoxDecoration(
+                          color: Colors.amber.withValues(alpha: 0.12),
+                          borderRadius: BorderRadius.circular(20),
+                          border: Border.all(color: Colors.amber.withValues(alpha: 0.35)),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const Icon(Icons.person_outline_rounded, size: 16, color: Colors.amber),
+                            const SizedBox(width: 6),
+                            Text(
+                              'وضع الضيف — تخزين محلي فقط',
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: Colors.amber.shade700,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+
+                  const SizedBox(height: 16),
+
+                  // Exit Guest Mode / Login Button
+                  SizedBox(
+                    height: 46,
+                    child: ElevatedButton.icon(
+                      onPressed: _exitGuestMode,
+                      icon: const Icon(Icons.login_rounded, size: 20),
+                      label: const Text(
+                        'خروج من وضع الضيف / تسجيل الدخول',
+                        style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                      ),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: AppColors.primaryTeal,
+                        foregroundColor: Colors.white,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        elevation: 0,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          // ── NOT AUTHENTICATED (but not guest) ── show login prompt
+          ] else if (!isAuthenticated) ...[
             Padding(
               padding: const EdgeInsets.all(16),
               child: Column(
@@ -534,6 +650,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 ],
               ),
             ),
+          // ── AUTHENTICATED ── full cloud sync controls
           ] else ...[
             Container(
               margin: const EdgeInsets.all(12),

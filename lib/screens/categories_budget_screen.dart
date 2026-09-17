@@ -14,7 +14,9 @@ import '../core/utils/currency_formatter.dart';
 import '../core/utils/icon_helper.dart';
 
 class CategoriesBudgetScreen extends StatefulWidget {
-  const CategoriesBudgetScreen({super.key});
+  final bool isEmbedded;
+
+  const CategoriesBudgetScreen({super.key, this.isEmbedded = false});
 
   @override
   State<CategoriesBudgetScreen> createState() => _CategoriesBudgetScreenState();
@@ -304,16 +306,18 @@ class _CategoriesBudgetScreenState extends State<CategoriesBudgetScreen> {
     final totalBudgetRatio = totalAllocatedBudget > 0 ? (totalSpentOnBudgetCategories / totalAllocatedBudget) : 0.0;
 
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('الميزانية والتصنيفات'),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.add_circle_outline_rounded),
-            tooltip: 'إضافة تصنيف جديد',
-            onPressed: _showAddCategoryDialog,
-          ),
-        ],
-      ),
+      appBar: widget.isEmbedded
+          ? null
+          : AppBar(
+              title: const Text('الميزانية والتصنيفات'),
+              actions: [
+                IconButton(
+                  icon: const Icon(Icons.add_circle_outline_rounded),
+                  tooltip: 'إضافة تصنيف جديد',
+                  onPressed: _showAddCategoryDialog,
+                ),
+              ],
+            ),
       body: ListView(
         physics: const BouncingScrollPhysics(),
         padding: const EdgeInsets.all(16),
@@ -508,6 +512,11 @@ class _CategoriesBudgetScreenState extends State<CategoriesBudgetScreen> {
 
           const SizedBox(height: 32),
         ],
+      ),
+      floatingActionButton: FloatingActionButton(
+        onPressed: _showAddCategoryDialog,
+        tooltip: 'إضافة تصنيف جديد',
+        child: const Icon(Icons.add_rounded, size: 28),
       ),
     );
   }

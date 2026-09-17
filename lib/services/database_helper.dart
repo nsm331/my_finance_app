@@ -11,6 +11,7 @@ import '../models/category_model.dart';
 import '../models/transaction_model.dart';
 import '../models/recurring_transaction_model.dart';
 import '../models/debt_model.dart';
+import 'cloud_sync_service.dart';
 
 class DatabaseHelper {
   static const String _databaseName = 'my_finance.db';
@@ -312,11 +313,14 @@ class DatabaseHelper {
       if (activeUserId != null && activeUserId!.isNotEmpty) {
         map['user_id'] ??= activeUserId;
       }
-      return await executor.insert(
+      final id = await executor.insert(
         tableWallets,
         map,
         conflictAlgorithm: ConflictAlgorithm.replace,
       );
+      map['id'] = id;
+      CloudSyncService().pushWallet(map);
+      return id;
     } catch (e) {
       debugPrint('Error inserting wallet: $e');
       rethrow;
@@ -360,12 +364,14 @@ class DatabaseHelper {
     try {
       if (wallet.id == null) return 0;
       final db = await database;
-      return await db.update(
+      final count = await db.update(
         tableWallets,
         wallet.toMap(),
         where: 'id = ?',
         whereArgs: [wallet.id],
       );
+      CloudSyncService().pushWallet(wallet.toMap());
+      return count;
     } catch (e) {
       debugPrint('Error updating wallet: $e');
       rethrow;
@@ -375,11 +381,13 @@ class DatabaseHelper {
   Future<int> deleteWallet(int id) async {
     try {
       final db = await database;
-      return await db.delete(
+      final count = await db.delete(
         tableWallets,
         where: 'id = ?',
         whereArgs: [id],
       );
+      CloudSyncService().deleteWalletFromCloud(id.toString());
+      return count;
     } catch (e) {
       debugPrint('Error deleting wallet: $e');
       rethrow;
@@ -417,11 +425,13 @@ class DatabaseHelper {
         if (activeUserId != null && activeUserId!.isNotEmpty) 'user_id': activeUserId,
       };
 
-      return await executor.insert(
+      final res = await executor.insert(
         tableTransactions,
         map,
         conflictAlgorithm: ConflictAlgorithm.replace,
       );
+      CloudSyncService().pushTransaction(transaction);
+      return res;
     } catch (e) {
       debugPrint('Error inserting transaction: $e');
       rethrow;
@@ -485,12 +495,14 @@ class DatabaseHelper {
         'recurring_id': transaction.recurringId,
       };
 
-      return await db.update(
+      final count = await db.update(
         tableTransactions,
         map,
         where: 'id = ?',
         whereArgs: [transaction.id],
       );
+      CloudSyncService().pushTransaction(transaction);
+      return count;
     } catch (e) {
       debugPrint('Error updating transaction: $e');
       rethrow;
@@ -500,11 +512,13 @@ class DatabaseHelper {
   Future<int> deleteTransaction(String id) async {
     try {
       final db = await database;
-      return await db.delete(
+      final count = await db.delete(
         tableTransactions,
         where: 'id = ?',
         whereArgs: [id],
       );
+      CloudSyncService().deleteTransactionFromCloud(id);
+      return count;
     } catch (e) {
       debugPrint('Error deleting transaction: $e');
       rethrow;
@@ -623,11 +637,13 @@ class DatabaseHelper {
         if (activeUserId != null && activeUserId!.isNotEmpty) 'user_id': activeUserId,
       };
 
-      return await executor.insert(
+      final res = await executor.insert(
         tableDebts,
         map,
         conflictAlgorithm: ConflictAlgorithm.replace,
       );
+      CloudSyncService().pushDebt(map);
+      return res;
     } catch (e) {
       debugPrint('Error inserting debt: $e');
       rethrow;
@@ -665,12 +681,14 @@ class DatabaseHelper {
         'payments_json': jsonEncode(debt.payments.map((p) => p.toMap()).toList()),
       };
 
-      return await db.update(
+      final count = await db.update(
         tableDebts,
         map,
         where: 'id = ?',
         whereArgs: [debt.id],
       );
+      CloudSyncService().pushDebt(map);
+      return count;
     } catch (e) {
       debugPrint('Error updating debt: $e');
       rethrow;
@@ -680,11 +698,13 @@ class DatabaseHelper {
   Future<int> deleteDebt(String id) async {
     try {
       final db = await database;
-      return await db.delete(
+      final count = await db.delete(
         tableDebts,
         where: 'id = ?',
         whereArgs: [id],
       );
+      CloudSyncService().deleteDebtFromCloud(id);
+      return count;
     } catch (e) {
       debugPrint('Error deleting debt: $e');
       rethrow;
@@ -709,11 +729,13 @@ class DatabaseHelper {
         if (activeUserId != null && activeUserId!.isNotEmpty) 'user_id': activeUserId,
       };
 
-      return await executor.insert(
+      final res = await executor.insert(
         tableCategories,
         map,
         conflictAlgorithm: ConflictAlgorithm.replace,
       );
+      CloudSyncService().pushCategory(map);
+      return res;
     } catch (e) {
       debugPrint('Error inserting category: $e');
       rethrow;
@@ -750,12 +772,14 @@ class DatabaseHelper {
         'budgets_json': jsonEncode(category.monthlyBudgets),
       };
 
-      return await db.update(
+      final count = await db.update(
         tableCategories,
         map,
         where: 'id = ?',
         whereArgs: [category.id],
       );
+      CloudSyncService().pushCategory(map);
+      return count;
     } catch (e) {
       debugPrint('Error updating category: $e');
       rethrow;
@@ -765,11 +789,13 @@ class DatabaseHelper {
   Future<int> deleteCategory(String id) async {
     try {
       final db = await database;
-      return await db.delete(
+      final count = await db.delete(
         tableCategories,
         where: 'id = ?',
         whereArgs: [id],
       );
+      CloudSyncService().deleteCategoryFromCloud(id);
+      return count;
     } catch (e) {
       debugPrint('Error deleting category: $e');
       rethrow;
@@ -912,6 +938,18 @@ class DatabaseHelper {
       await txn.delete(tableRecurring, where: 'user_id = ?', whereArgs: [userId]);
       await txn.delete(tableWallets, where: 'user_id = ?', whereArgs: [userId]);
     });
+  }
+
+  /// Inserts or replaces a raw row for real-time cloud sync
+  Future<void> upsertRawRow(String table, Map<String, dynamic> row) async {
+    final db = await database;
+    await db.insert(table, row, conflictAlgorithm: ConflictAlgorithm.replace);
+  }
+
+  /// Deletes a row matching where clause for real-time cloud sync
+  Future<int> deleteRawRow(String table, String where, List<dynamic> whereArgs) async {
+    final db = await database;
+    return await db.delete(table, where: where, whereArgs: whereArgs);
   }
 
   // ==========================================

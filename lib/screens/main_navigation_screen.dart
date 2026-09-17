@@ -4,15 +4,21 @@ import 'package:provider/provider.dart';
 import '../providers/security_provider.dart';
 import '../services/backup_service.dart';
 import '../core/constants/app_colors.dart';
+import '../widgets/custom_drawer.dart';
 import 'dashboard_screen.dart';
 import 'transactions_screen.dart';
 import 'debts_screen.dart';
 import 'categories_budget_screen.dart';
-import 'settings_screen.dart';
+import 'wallets_screen.dart';
 import 'add_edit_transaction_screen.dart';
 import 'add_edit_debt_screen.dart';
 import 'pin_lock_screen.dart';
 import '../widgets/transfer_sheet.dart';
+import '../services/cloud_sync_service.dart';
+import '../services/guest_service.dart';
+import '../providers/finance_provider.dart';
+import '../providers/debt_provider.dart';
+import '../providers/category_provider.dart';
 
 class MainNavigationScreen extends StatefulWidget {
   const MainNavigationScreen({super.key});
@@ -31,6 +37,20 @@ class _MainNavigationScreenState extends State<MainNavigationScreen>
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _checkAndRunDailyBackup();
+    _initRealTimeSync();
+  }
+
+  Future<void> _initRealTimeSync() async {
+    final isGuest = await GuestService.isGuestMode();
+    if (!isGuest && mounted) {
+      CloudSyncService().startRealTimeListeners(onDataChanged: () {
+        if (mounted) {
+          context.read<FinanceProvider>().loadAllData();
+          context.read<DebtProvider>().loadAll();
+          context.read<CategoryProvider>().loadCategories();
+        }
+      });
+    }
   }
 
   Future<void> _checkAndRunDailyBackup() async {
@@ -64,6 +84,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen>
 
   @override
   void dispose() {
+    CloudSyncService().stopRealTimeListeners();
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
   }
@@ -99,6 +120,39 @@ class _MainNavigationScreenState extends State<MainNavigationScreen>
     setState(() {
       _currentIndex = index;
     });
+  }
+
+  String _getAppBarTitle(int index) {
+    switch (index) {
+      case 0:
+        return 'لوحة التحكم المالية';
+      case 1:
+        return 'سجل العمليات المالية';
+      case 2:
+        return 'إدارة الديون وسجل الأشخاص';
+      case 3:
+        return 'الميزانية والتصنيفات';
+      case 4:
+        return 'إدارة المحافظ والحسابات';
+      default:
+        return 'ميزانيتي';
+    }
+  }
+
+  List<Widget> _getAppBarActions(int index) {
+    switch (index) {
+      case 0:
+      case 4:
+        return [
+          IconButton(
+            icon: const Icon(Icons.sync_alt_rounded),
+            tooltip: 'تحويل بين المحافظ',
+            onPressed: () => TransferSheet.show(context),
+          ),
+        ];
+      default:
+        return [];
+    }
   }
 
   Future<void> _showExitConfirmationDialog() async {
@@ -301,11 +355,12 @@ class _MainNavigationScreenState extends State<MainNavigationScreen>
       DashboardScreen(
         onNavigateToTransactions: () => _onTabSelected(1),
         onNavigateToDebts: () => _onTabSelected(2),
+        onNavigateToWallets: () => _onTabSelected(4),
       ),
       const TransactionsScreen(),
       const DebtsScreen(),
-      const CategoriesBudgetScreen(),
-      const SettingsScreen(),
+      const CategoriesBudgetScreen(isEmbedded: true),
+      const WalletsScreen(isEmbedded: true),
     ];
 
     return PopScope(
@@ -321,6 +376,14 @@ class _MainNavigationScreenState extends State<MainNavigationScreen>
         }
       },
       child: Scaffold(
+        appBar: AppBar(
+          title: Text(_getAppBarTitle(_currentIndex)),
+          actions: _getAppBarActions(_currentIndex),
+        ),
+        drawer: CustomDrawer(
+          onNavigateToDashboard: () => _onTabSelected(0),
+          onNavigateToWallets: () => _onTabSelected(4),
+        ),
         body: IndexedStack(
           index: _currentIndex,
           children: screens,
@@ -328,6 +391,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen>
         bottomNavigationBar: BottomNavigationBar(
           currentIndex: _currentIndex,
           onTap: _onTabSelected,
+          type: BottomNavigationBarType.fixed,
           items: const [
             BottomNavigationBarItem(
               icon: Icon(Icons.dashboard_rounded),
@@ -346,8 +410,8 @@ class _MainNavigationScreenState extends State<MainNavigationScreen>
               label: 'الميزانية',
             ),
             BottomNavigationBarItem(
-              icon: Icon(Icons.settings_rounded),
-              label: 'الإعدادات',
+              icon: Icon(Icons.account_balance_wallet_rounded),
+              label: 'المحافظ',
             ),
           ],
         ),

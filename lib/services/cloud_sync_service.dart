@@ -7,6 +7,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'auth_service.dart';
 import 'database_helper.dart';
 import 'firebase_service.dart';
+import '../models/transaction_model.dart';
+import '../models/app_currency.dart';
 
 class CloudSyncService {
   static const String keyLastCloudSyncDate = 'last_cloud_sync_date';
@@ -16,7 +18,35 @@ class CloudSyncService {
   final AuthService _authService;
   final FirebaseFirestore? _customFirestore;
 
-  CloudSyncService({
+  static CloudSyncService? _instance;
+
+  StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? _transactionsSubscription;
+  StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? _walletsSubscription;
+  StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? _categoriesSubscription;
+  StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? _debtsSubscription;
+
+  factory CloudSyncService({
+    DatabaseHelper? dbHelper,
+    AuthService? authService,
+    FirebaseFirestore? firestore,
+  }) {
+    if (dbHelper != null || authService != null || firestore != null) {
+      return CloudSyncService._custom(
+        dbHelper: dbHelper,
+        authService: authService,
+        firestore: firestore,
+      );
+    }
+    _instance ??= CloudSyncService._internal();
+    return _instance!;
+  }
+
+  CloudSyncService._internal()
+      : _dbHelper = DatabaseHelper.instance,
+        _authService = AuthService(),
+        _customFirestore = null;
+
+  CloudSyncService._custom({
     DatabaseHelper? dbHelper,
     AuthService? authService,
     FirebaseFirestore? firestore,
@@ -228,17 +258,20 @@ class CloudSyncService {
       }
 
       // Convert docs into SQLite map rows (stripping Firestore-specific metadata)
-      List<Map<String, dynamic>> cleanRows(List<QueryDocumentSnapshot<Map<String, dynamic>>> docs) {
+      List<Map<String, dynamic>> cleanRows(List<QueryDocumentSnapshot<Map<String, dynamic>>> docs, {bool isWallets = false}) {
         return docs.map((doc) {
           final data = Map<String, dynamic>.from(doc.data());
           data.remove('_synced_at');
+          if (isWallets && data['id'] is String) {
+            data['id'] = int.tryParse(data['id'].toString()) ?? data['id'];
+          }
           return data;
         }).toList();
       }
 
       // Atomically replace local SQLite tables
       if (walletsDocs.isNotEmpty) {
-        await _dbHelper.replaceUserData(DatabaseHelper.tableWallets, cleanRows(walletsDocs), userId: userId);
+        await _dbHelper.replaceUserData(DatabaseHelper.tableWallets, cleanRows(walletsDocs, isWallets: true), userId: userId);
       }
       if (personsDocs.isNotEmpty) {
         await _dbHelper.replaceUserData(DatabaseHelper.tablePersons, cleanRows(personsDocs), userId: userId);
@@ -314,5 +347,355 @@ class CloudSyncService {
       final nowStr = DateFormat('yyyy-MM-dd HH:mm').format(DateTime.now());
       await prefs.setString(keyLastCloudSyncDate, nowStr);
     } catch (_) {}
+  }
+
+  // ==========================================
+  // REAL-TIME SYNC ENGINE
+  // ==========================================
+
+  // --- Transactions ---
+
+  /// Pushes a single transaction write/update to Firestore in real-time.
+  Future<void> pushTransaction(TransactionModel tx) async {
+    try {
+      final uid = _authService.currentUserId;
+      if (uid == null || uid.isEmpty) return;
+
+      final map = {
+        'id': tx.id,
+        'title': tx.title,
+        'amount': tx.amount,
+        'currency': tx.currency.code,
+        'type': tx.type.name,
+        'category_id': tx.categoryId,
+        'category_name': tx.categoryName,
+        'category_icon_code': tx.categoryIconCode,
+        'category_color_value': tx.categoryColorValue,
+        'date': tx.date.toIso8601String(),
+        'notes': tx.notes,
+        'created_at': tx.createdAt.toIso8601String(),
+        'wallet_id': tx.walletId,
+        'isTransfer': tx.isTransfer,
+        'transfer_id': tx.transferId,
+        'exchange_rate': tx.exchangeRate,
+        'target_currency': tx.targetCurrency?.code,
+        'target_amount': tx.targetAmount,
+        'is_recurring': tx.isRecurring ? 1 : 0,
+        'recurring_id': tx.recurringId,
+        'user_id': uid,
+        '_synced_at': FieldValue.serverTimestamp(),
+      };
+
+      _firestore
+          .collection('users')
+          .doc(uid)
+          .collection('transactions')
+          .doc(tx.id)
+          .set(map, SetOptions(merge: true))
+          .catchError((e) {
+        debugPrint('[CloudSyncService] Error pushing transaction ${tx.id}: $e');
+      });
+    } catch (e) {
+      debugPrint('[CloudSyncService] Push transaction exception: $e');
+    }
+  }
+
+  /// Deletes a transaction from Firestore in real-time.
+  Future<void> deleteTransactionFromCloud(String id) async {
+    try {
+      final uid = _authService.currentUserId;
+      if (uid == null || uid.isEmpty) return;
+
+      _firestore
+          .collection('users')
+          .doc(uid)
+          .collection('transactions')
+          .doc(id)
+          .delete()
+          .catchError((e) {
+        debugPrint('[CloudSyncService] Error deleting transaction $id from cloud: $e');
+      });
+    } catch (e) {
+      debugPrint('[CloudSyncService] Delete transaction exception: $e');
+    }
+  }
+
+  // --- Wallets ---
+
+  /// Pushes a single wallet to Firestore under users/{uid}/wallets/{walletId}
+  Future<void> pushWallet(Map<String, dynamic> walletMap) async {
+    try {
+      final uid = _authService.currentUserId;
+      if (uid == null || uid.isEmpty) return;
+
+      final id = walletMap['id']?.toString();
+      if (id == null || id.isEmpty) return;
+
+      final data = Map<String, dynamic>.from(walletMap);
+      data['user_id'] = uid;
+      data['_synced_at'] = FieldValue.serverTimestamp();
+
+      _firestore
+          .collection('users')
+          .doc(uid)
+          .collection('wallets')
+          .doc(id)
+          .set(data, SetOptions(merge: true))
+          .catchError((e) {
+        debugPrint('[CloudSyncService] Error pushing wallet $id: $e');
+      });
+    } catch (e) {
+      debugPrint('[CloudSyncService] Push wallet exception: $e');
+    }
+  }
+
+  /// Deletes a wallet from Firestore under users/{uid}/wallets/{walletId}
+  Future<void> deleteWalletFromCloud(String walletId) async {
+    try {
+      final uid = _authService.currentUserId;
+      if (uid == null || uid.isEmpty) return;
+
+      _firestore
+          .collection('users')
+          .doc(uid)
+          .collection('wallets')
+          .doc(walletId)
+          .delete()
+          .catchError((e) {
+        debugPrint('[CloudSyncService] Error deleting wallet $walletId: $e');
+      });
+    } catch (e) {
+      debugPrint('[CloudSyncService] Delete wallet exception: $e');
+    }
+  }
+
+  // --- Categories ---
+
+  /// Pushes a single category to Firestore under users/{uid}/categories/{categoryId}
+  Future<void> pushCategory(Map<String, dynamic> categoryMap) async {
+    try {
+      final uid = _authService.currentUserId;
+      if (uid == null || uid.isEmpty) return;
+
+      final id = categoryMap['id']?.toString();
+      if (id == null || id.isEmpty) return;
+
+      final data = Map<String, dynamic>.from(categoryMap);
+      data['user_id'] = uid;
+      data['_synced_at'] = FieldValue.serverTimestamp();
+
+      _firestore
+          .collection('users')
+          .doc(uid)
+          .collection('categories')
+          .doc(id)
+          .set(data, SetOptions(merge: true))
+          .catchError((e) {
+        debugPrint('[CloudSyncService] Error pushing category $id: $e');
+      });
+    } catch (e) {
+      debugPrint('[CloudSyncService] Push category exception: $e');
+    }
+  }
+
+  /// Deletes a category from Firestore under users/{uid}/categories/{categoryId}
+  Future<void> deleteCategoryFromCloud(String categoryId) async {
+    try {
+      final uid = _authService.currentUserId;
+      if (uid == null || uid.isEmpty) return;
+
+      _firestore
+          .collection('users')
+          .doc(uid)
+          .collection('categories')
+          .doc(categoryId)
+          .delete()
+          .catchError((e) {
+        debugPrint('[CloudSyncService] Error deleting category $categoryId: $e');
+      });
+    } catch (e) {
+      debugPrint('[CloudSyncService] Delete category exception: $e');
+    }
+  }
+
+  // --- Debts ---
+
+  /// Pushes a single debt to Firestore under users/{uid}/debts/{debtId}
+  Future<void> pushDebt(Map<String, dynamic> debtMap) async {
+    try {
+      final uid = _authService.currentUserId;
+      if (uid == null || uid.isEmpty) return;
+
+      final id = debtMap['id']?.toString();
+      if (id == null || id.isEmpty) return;
+
+      final data = Map<String, dynamic>.from(debtMap);
+      data['user_id'] = uid;
+      data['_synced_at'] = FieldValue.serverTimestamp();
+
+      _firestore
+          .collection('users')
+          .doc(uid)
+          .collection('debts')
+          .doc(id)
+          .set(data, SetOptions(merge: true))
+          .catchError((e) {
+        debugPrint('[CloudSyncService] Error pushing debt $id: $e');
+      });
+    } catch (e) {
+      debugPrint('[CloudSyncService] Push debt exception: $e');
+    }
+  }
+
+  /// Deletes a debt from Firestore under users/{uid}/debts/{debtId}
+  Future<void> deleteDebtFromCloud(String debtId) async {
+    try {
+      final uid = _authService.currentUserId;
+      if (uid == null || uid.isEmpty) return;
+
+      _firestore
+          .collection('users')
+          .doc(uid)
+          .collection('debts')
+          .doc(debtId)
+          .delete()
+          .catchError((e) {
+        debugPrint('[CloudSyncService] Error deleting debt $debtId: $e');
+      });
+    } catch (e) {
+      debugPrint('[CloudSyncService] Delete debt exception: $e');
+    }
+  }
+
+  // --- Real-time Listeners ---
+
+  void _setupCollectionListener({
+    required String collectionName,
+    required String tableName,
+    required String uid,
+    required VoidCallback? onDataChanged,
+    required void Function(StreamSubscription<QuerySnapshot<Map<String, dynamic>>> sub) onSubCreated,
+  }) {
+    final sub = _firestore
+        .collection('users')
+        .doc(uid)
+        .collection(collectionName)
+        .snapshots()
+        .listen((snapshot) async {
+      bool localModified = false;
+
+      for (final change in snapshot.docChanges) {
+        // Echo-loop prevention: Ignore locally initiated optimistic writes still pending write
+        if (change.doc.metadata.hasPendingWrites) {
+          continue;
+        }
+
+        final data = change.doc.data();
+        final docId = change.doc.id;
+
+        if (change.type == DocumentChangeType.added || change.type == DocumentChangeType.modified) {
+          if (data != null) {
+            try {
+              final row = Map<String, dynamic>.from(data);
+              row.remove('_synced_at');
+              row['user_id'] = uid;
+              if (tableName == DatabaseHelper.tableWallets && row['id'] is String) {
+                row['id'] = int.tryParse(row['id'].toString()) ?? row['id'];
+              }
+              await _dbHelper.upsertRawRow(tableName, row);
+              localModified = true;
+            } catch (e) {
+              debugPrint('[CloudSyncService] Error saving remote $collectionName doc $docId to SQLite: $e');
+            }
+          }
+        } else if (change.type == DocumentChangeType.removed) {
+          try {
+            await _dbHelper.deleteRawRow(tableName, 'id = ?', [docId]);
+            localModified = true;
+          } catch (e) {
+            debugPrint('[CloudSyncService] Error deleting remote $collectionName doc $docId from SQLite: $e');
+          }
+        }
+      }
+
+      if (localModified) {
+        debugPrint('[CloudSyncService] Remote $collectionName synced to SQLite. Refreshing state.');
+        await _recordSyncSuccess();
+        onDataChanged?.call();
+      }
+    }, onError: (err) {
+      debugPrint('[CloudSyncService] Real-time listener error for $collectionName: $err');
+    });
+
+    onSubCreated(sub);
+  }
+
+  /// Starts real-time listeners on Firestore collections (transactions, wallets, categories, debts).
+  /// Automatically prevents echo-loops by verifying hasPendingWrites.
+  void startRealTimeListeners({VoidCallback? onDataChanged}) {
+    final uid = _authService.currentUserId;
+    if (uid == null || uid.isEmpty) {
+      debugPrint('[CloudSyncService] startRealTimeListeners skipped: No authenticated user.');
+      return;
+    }
+
+    if (_transactionsSubscription != null ||
+        _walletsSubscription != null ||
+        _categoriesSubscription != null ||
+        _debtsSubscription != null) {
+      debugPrint('[CloudSyncService] Real-time listeners already active for user: $uid');
+      return;
+    }
+
+    debugPrint('[CloudSyncService] Starting all real-time Firestore listeners for user: $uid');
+
+    // 1. Transactions
+    _setupCollectionListener(
+      collectionName: 'transactions',
+      tableName: DatabaseHelper.tableTransactions,
+      uid: uid,
+      onDataChanged: onDataChanged,
+      onSubCreated: (s) => _transactionsSubscription = s,
+    );
+
+    // 2. Wallets
+    _setupCollectionListener(
+      collectionName: 'wallets',
+      tableName: DatabaseHelper.tableWallets,
+      uid: uid,
+      onDataChanged: onDataChanged,
+      onSubCreated: (s) => _walletsSubscription = s,
+    );
+
+    // 3. Categories
+    _setupCollectionListener(
+      collectionName: 'categories',
+      tableName: DatabaseHelper.tableCategories,
+      uid: uid,
+      onDataChanged: onDataChanged,
+      onSubCreated: (s) => _categoriesSubscription = s,
+    );
+
+    // 4. Debts
+    _setupCollectionListener(
+      collectionName: 'debts',
+      tableName: DatabaseHelper.tableDebts,
+      uid: uid,
+      onDataChanged: onDataChanged,
+      onSubCreated: (s) => _debtsSubscription = s,
+    );
+  }
+
+  /// Stops all real-time listeners and frees resources
+  void stopRealTimeListeners() {
+    _transactionsSubscription?.cancel();
+    _transactionsSubscription = null;
+    _walletsSubscription?.cancel();
+    _walletsSubscription = null;
+    _categoriesSubscription?.cancel();
+    _categoriesSubscription = null;
+    _debtsSubscription?.cancel();
+    _debtsSubscription = null;
+    debugPrint('[CloudSyncService] All real-time listeners successfully stopped.');
   }
 }
