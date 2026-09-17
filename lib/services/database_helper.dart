@@ -1,3 +1,5 @@
+// ignore_for_file: avoid_print
+
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:path/path.dart';
@@ -543,23 +545,47 @@ class DatabaseHelper {
   // PERSONS CRUD
   // ==========================================
 
+  Future<PersonModel?> getPersonById(String id) async {
+    try {
+      final db = await database;
+      final maps = await db.query(
+        tablePersons,
+        where: 'id = ?',
+        whereArgs: [id],
+        limit: 1,
+      );
+      if (maps.isNotEmpty) {
+        return PersonModel.fromMap(maps.first);
+      }
+      return null;
+    } catch (e) {
+      print('SYNC ERROR (Persons/Debts): Error getting person by id: $e');
+      debugPrint('Error getting person by id: $e');
+      return null;
+    }
+  }
+
   Future<int> insertPerson(PersonModel person, {Transaction? txn}) async {
     try {
       final executor = txn ?? await database;
+      final uid = activeUserId ?? person.userId;
       final map = {
         'id': person.id,
         'name': person.name,
         'phone': person.phone,
         'notes': person.notes,
         'created_at': person.createdAt.toIso8601String(),
-        if (activeUserId != null && activeUserId!.isNotEmpty) 'user_id': activeUserId,
+        if (uid != null && uid.isNotEmpty) 'user_id': uid,
       };
-      return await executor.insert(
+      final res = await executor.insert(
         tablePersons,
         map,
         conflictAlgorithm: ConflictAlgorithm.replace,
       );
+      CloudSyncService().pushPerson(map);
+      return res;
     } catch (e) {
+      print('SYNC ERROR (Persons/Debts): Error inserting person in SQLite: $e');
       debugPrint('Error inserting person: $e');
       rethrow;
     }
@@ -574,6 +600,7 @@ class DatabaseHelper {
       final maps = await db.query(tablePersons, where: whereClause, whereArgs: whereArgs, orderBy: 'name COLLATE NOCASE ASC');
       return maps.map((m) => PersonModel.fromMap(m)).toList();
     } catch (e) {
+      print('SYNC ERROR (Persons/Debts): Error getting all persons: $e');
       debugPrint('Error getting all persons: $e');
       return [];
     }
@@ -582,20 +609,25 @@ class DatabaseHelper {
   Future<int> updatePerson(PersonModel person) async {
     try {
       final db = await database;
+      final uid = activeUserId ?? person.userId;
       final map = {
         'id': person.id,
         'name': person.name,
         'phone': person.phone,
         'notes': person.notes,
         'created_at': person.createdAt.toIso8601String(),
+        if (uid != null && uid.isNotEmpty) 'user_id': uid,
       };
-      return await db.update(
+      final count = await db.update(
         tablePersons,
         map,
         where: 'id = ?',
         whereArgs: [person.id],
       );
+      CloudSyncService().pushPerson(map);
+      return count;
     } catch (e) {
+      print('SYNC ERROR (Persons/Debts): Error updating person in SQLite: $e');
       debugPrint('Error updating person: $e');
       rethrow;
     }
@@ -604,12 +636,15 @@ class DatabaseHelper {
   Future<int> deletePerson(String id) async {
     try {
       final db = await database;
-      return await db.delete(
+      final count = await db.delete(
         tablePersons,
         where: 'id = ?',
         whereArgs: [id],
       );
+      CloudSyncService().deletePersonFromCloud(id);
+      return count;
     } catch (e) {
+      print('SYNC ERROR (Persons/Debts): Error deleting person from SQLite: $e');
       debugPrint('Error deleting person: $e');
       rethrow;
     }
@@ -622,9 +657,14 @@ class DatabaseHelper {
   Future<int> insertDebt(DebtModel debt, {Transaction? txn}) async {
     try {
       final executor = txn ?? await database;
+      final uid = activeUserId ?? debt.userId;
+      final cleanPersonId = (debt.personId != null && debt.personId!.trim().isNotEmpty)
+          ? debt.personId!.trim()
+          : null;
+
       final map = {
         'id': debt.id,
-        'person_id': debt.personId,
+        'person_id': cleanPersonId,
         'person_name': debt.personName,
         'phone': debt.phone,
         'total_amount': debt.totalAmount,
@@ -634,7 +674,7 @@ class DatabaseHelper {
         'created_at': debt.createdAt.toIso8601String(),
         'notes': debt.notes,
         'payments_json': jsonEncode(debt.payments.map((p) => p.toMap()).toList()),
-        if (activeUserId != null && activeUserId!.isNotEmpty) 'user_id': activeUserId,
+        if (uid != null && uid.isNotEmpty) 'user_id': uid,
       };
 
       final res = await executor.insert(
@@ -645,6 +685,7 @@ class DatabaseHelper {
       CloudSyncService().pushDebt(map);
       return res;
     } catch (e) {
+      print('SYNC ERROR (Persons/Debts): Error inserting debt in SQLite: $e');
       debugPrint('Error inserting debt: $e');
       rethrow;
     }
@@ -659,6 +700,7 @@ class DatabaseHelper {
       final maps = await db.query(tableDebts, where: whereClause, whereArgs: whereArgs, orderBy: 'created_at DESC');
       return maps.map((m) => DebtModel.fromMap(m)).toList();
     } catch (e) {
+      print('SYNC ERROR (Persons/Debts): Error getting all debts: $e');
       debugPrint('Error getting all debts: $e');
       return [];
     }
@@ -667,9 +709,14 @@ class DatabaseHelper {
   Future<int> updateDebt(DebtModel debt) async {
     try {
       final db = await database;
+      final uid = activeUserId ?? debt.userId;
+      final cleanPersonId = (debt.personId != null && debt.personId!.trim().isNotEmpty)
+          ? debt.personId!.trim()
+          : null;
+
       final map = {
         'id': debt.id,
-        'person_id': debt.personId,
+        'person_id': cleanPersonId,
         'person_name': debt.personName,
         'phone': debt.phone,
         'total_amount': debt.totalAmount,
@@ -679,6 +726,7 @@ class DatabaseHelper {
         'created_at': debt.createdAt.toIso8601String(),
         'notes': debt.notes,
         'payments_json': jsonEncode(debt.payments.map((p) => p.toMap()).toList()),
+        if (uid != null && uid.isNotEmpty) 'user_id': uid,
       };
 
       final count = await db.update(
@@ -690,6 +738,7 @@ class DatabaseHelper {
       CloudSyncService().pushDebt(map);
       return count;
     } catch (e) {
+      print('SYNC ERROR (Persons/Debts): Error updating debt in SQLite: $e');
       debugPrint('Error updating debt: $e');
       rethrow;
     }
@@ -706,6 +755,7 @@ class DatabaseHelper {
       CloudSyncService().deleteDebtFromCloud(id);
       return count;
     } catch (e) {
+      print('SYNC ERROR (Persons/Debts): Error deleting debt from SQLite: $e');
       debugPrint('Error deleting debt: $e');
       rethrow;
     }

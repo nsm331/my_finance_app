@@ -44,6 +44,7 @@ class DebtModel {
   final DateTime createdAt;
   final String? notes;
   final List<DebtPaymentModel> payments;
+  final String? userId;
 
   DebtModel({
     required this.id,
@@ -57,6 +58,7 @@ class DebtModel {
     DateTime? createdAt,
     this.notes,
     List<DebtPaymentModel>? payments,
+    this.userId,
   })  : createdAt = createdAt ?? DateTime.now(),
         payments = payments ?? [];
 
@@ -79,9 +81,12 @@ class DebtModel {
   }
 
   Map<String, dynamic> toMap() {
+    final cleanPersonId = (personId != null && personId!.trim().isNotEmpty)
+        ? personId!.trim()
+        : null;
     return {
       'id': id,
-      'person_id': personId,
+      'person_id': cleanPersonId,
       'person_name': personName,
       'phone': phone,
       'total_amount': totalAmount,
@@ -91,8 +96,12 @@ class DebtModel {
       'created_at': createdAt.toIso8601String(),
       'notes': notes,
       'payments': jsonEncode(payments.map((p) => p.toMap()).toList()),
+      'payments_json': jsonEncode(payments.map((p) => p.toMap()).toList()),
+      if (userId != null && userId!.isNotEmpty) 'user_id': userId,
     };
   }
+
+  Map<String, dynamic> toJson() => toMap();
 
   factory DebtModel.fromMap(Map<dynamic, dynamic> map) {
     List<DebtPaymentModel> parsedPayments = [];
@@ -112,9 +121,14 @@ class DebtModel {
           .toList();
     }
 
+    final rawPersonId = (map['person_id'] ?? map['personId']) as String?;
+    final cleanPersonId = (rawPersonId != null && rawPersonId.trim().isNotEmpty)
+        ? rawPersonId.trim()
+        : null;
+
     return DebtModel(
       id: map['id'] as String,
-      personId: (map['person_id'] ?? map['personId']) as String?,
+      personId: cleanPersonId,
       personName: (map['person_name'] ?? map['personName']) as String? ?? 'بدون اسم',
       phone: map['phone'] as String?,
       totalAmount: ((map['total_amount'] ?? map['totalAmount']) as num).toDouble(),
@@ -126,8 +140,11 @@ class DebtModel {
       createdAt: DateTime.tryParse((map['created_at'] ?? map['createdAt']) as String? ?? '') ?? DateTime.now(),
       notes: map['notes'] as String?,
       payments: parsedPayments,
+      userId: (map['user_id'] ?? map['userId']) as String?,
     );
   }
+
+  factory DebtModel.fromJson(Map<dynamic, dynamic> json) => DebtModel.fromMap(json);
 
   DebtModel copyWith({
     String? id,
@@ -141,6 +158,7 @@ class DebtModel {
     DateTime? createdAt,
     String? notes,
     List<DebtPaymentModel>? payments,
+    String? userId,
   }) {
     return DebtModel(
       id: id ?? this.id,
@@ -154,6 +172,7 @@ class DebtModel {
       createdAt: createdAt ?? this.createdAt,
       notes: notes ?? this.notes,
       payments: payments ?? List.from(this.payments),
+      userId: userId ?? this.userId,
     );
   }
 }

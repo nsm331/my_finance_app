@@ -1,3 +1,5 @@
+// ignore_for_file: avoid_print
+
 import 'dart:async';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/foundation.dart';
@@ -23,6 +25,7 @@ class CloudSyncService {
   StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? _transactionsSubscription;
   StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? _walletsSubscription;
   StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? _categoriesSubscription;
+  StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? _personsSubscription;
   StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? _debtsSubscription;
 
   factory CloudSyncService({
@@ -188,6 +191,7 @@ class CloudSyncService {
         totalUploaded: 0,
       );
     } catch (e, stack) {
+      print('SYNC ERROR (Persons/Debts): Error in uploadLocalDataToCloud: $e');
       debugPrint('[CloudSyncService] Error in uploadLocalDataToCloud: $e\n$stack');
       return (
         success: false,
@@ -222,32 +226,84 @@ class CloudSyncService {
 
       final userDocRef = _firestore.collection('users').doc(userId);
 
-      // Fetch all subcollections in parallel with timeout
-      final results = await Future.wait([
-        userDocRef.collection('wallets').get().timeout(const Duration(seconds: 12)),
-        userDocRef.collection('transactions').get().timeout(const Duration(seconds: 12)),
-        userDocRef.collection('persons').get().timeout(const Duration(seconds: 12)),
-        userDocRef.collection('debts').get().timeout(const Duration(seconds: 12)),
-        userDocRef.collection('categories').get().timeout(const Duration(seconds: 12)),
-        userDocRef.collection('recurring').get().timeout(const Duration(seconds: 12)),
-      ]).timeout(
-        const Duration(seconds: 15),
-        onTimeout: () => throw TimeoutException('انتهت مهلة استرجاع البيانات من السحابة'),
-      );
+      // Convert docs into SQLite map rows (stripping Firestore-specific metadata)
+      List<Map<String, dynamic>> cleanRows(
+        List<QueryDocumentSnapshot<Map<String, dynamic>>> docs, {
+        bool isWallets = false,
+        bool isDebts = false,
+      }) {
+        return docs.map((doc) {
+          final data = Map<String, dynamic>.from(doc.data());
+          data.remove('_synced_at');
+          data['user_id'] = userId;
+          if (isWallets && data['id'] is String) {
+            data['id'] = int.tryParse(data['id'].toString()) ?? data['id'];
+          }
+          if (isDebts) {
+            final pid = data['person_id']?.toString().trim();
+            data['person_id'] = (pid != null && pid.isNotEmpty) ? pid : null;
+          }
+          return data;
+        }).toList();
+      }
 
-      final walletsDocs = results[0].docs;
-      final txDocs = results[1].docs;
-      final personsDocs = results[2].docs;
-      final debtsDocs = results[3].docs;
-      final categoriesDocs = results[4].docs;
-      final recurringDocs = results[5].docs;
+      int totalCount = 0;
 
-      int totalCount = walletsDocs.length +
-          txDocs.length +
-          personsDocs.length +
-          debtsDocs.length +
-          categoriesDocs.length +
-          recurringDocs.length;
+      // 1. Wallets
+      final walletsDocs = (await userDocRef.collection('wallets').get().timeout(const Duration(seconds: 12))).docs;
+      if (walletsDocs.isNotEmpty) {
+        await _dbHelper.replaceUserData(DatabaseHelper.tableWallets, cleanRows(walletsDocs, isWallets: true), userId: userId);
+        totalCount += walletsDocs.length;
+      }
+
+      // 2. Categories
+      final categoriesDocs = (await userDocRef.collection('categories').get().timeout(const Duration(seconds: 12))).docs;
+      if (categoriesDocs.isNotEmpty) {
+        await _dbHelper.replaceUserData(DatabaseHelper.tableCategories, cleanRows(categoriesDocs), userId: userId);
+        totalCount += categoriesDocs.length;
+      }
+
+      // 3. Transactions
+      final txDocs = (await userDocRef.collection('transactions').get().timeout(const Duration(seconds: 12))).docs;
+      if (txDocs.isNotEmpty) {
+        await _dbHelper.replaceUserData(DatabaseHelper.tableTransactions, cleanRows(txDocs), userId: userId);
+        totalCount += txDocs.length;
+      }
+
+      // 4. Persons (ENFORCE STRICT ORDER: Persons MUST be fetched and inserted into SQLite FIRST)
+      try {
+        final personsSnap = await userDocRef.collection('persons').get().timeout(const Duration(seconds: 12));
+        final personsDocs = personsSnap.docs;
+        if (personsDocs.isNotEmpty) {
+          await _dbHelper.replaceUserData(DatabaseHelper.tablePersons, cleanRows(personsDocs), userId: userId);
+          totalCount += personsDocs.length;
+          debugPrint('[CloudSyncService] Persons restored to SQLite successfully (${personsDocs.length} records).');
+        }
+      } catch (e) {
+        print('SYNC ERROR (Persons/Debts): Failed while syncing persons: $e');
+        rethrow;
+      }
+
+      // 5. Debts (ENFORCE STRICT ORDER: Debts MUST be inserted into SQLite ONLY AFTER persons are fully inserted)
+      try {
+        final debtsSnap = await userDocRef.collection('debts').get().timeout(const Duration(seconds: 12));
+        final debtsDocs = debtsSnap.docs;
+        if (debtsDocs.isNotEmpty) {
+          await _dbHelper.replaceUserData(DatabaseHelper.tableDebts, cleanRows(debtsDocs, isDebts: true), userId: userId);
+          totalCount += debtsDocs.length;
+          debugPrint('[CloudSyncService] Debts restored to SQLite successfully (${debtsDocs.length} records).');
+        }
+      } catch (e) {
+        print('SYNC ERROR (Persons/Debts): Failed while syncing debts: $e');
+        rethrow;
+      }
+
+      // 6. Recurring
+      final recurringDocs = (await userDocRef.collection('recurring').get().timeout(const Duration(seconds: 12))).docs;
+      if (recurringDocs.isNotEmpty) {
+        await _dbHelper.replaceUserData(DatabaseHelper.tableRecurring, cleanRows(recurringDocs), userId: userId);
+        totalCount += recurringDocs.length;
+      }
 
       if (totalCount == 0) {
         return (
@@ -255,38 +311,6 @@ class CloudSyncService {
           message: 'لا توجد بيانات محفوظة في السحابة لهذا الحساب بعد.',
           totalDownloaded: 0,
         );
-      }
-
-      // Convert docs into SQLite map rows (stripping Firestore-specific metadata)
-      List<Map<String, dynamic>> cleanRows(List<QueryDocumentSnapshot<Map<String, dynamic>>> docs, {bool isWallets = false}) {
-        return docs.map((doc) {
-          final data = Map<String, dynamic>.from(doc.data());
-          data.remove('_synced_at');
-          if (isWallets && data['id'] is String) {
-            data['id'] = int.tryParse(data['id'].toString()) ?? data['id'];
-          }
-          return data;
-        }).toList();
-      }
-
-      // Atomically replace local SQLite tables
-      if (walletsDocs.isNotEmpty) {
-        await _dbHelper.replaceUserData(DatabaseHelper.tableWallets, cleanRows(walletsDocs, isWallets: true), userId: userId);
-      }
-      if (personsDocs.isNotEmpty) {
-        await _dbHelper.replaceUserData(DatabaseHelper.tablePersons, cleanRows(personsDocs), userId: userId);
-      }
-      if (categoriesDocs.isNotEmpty) {
-        await _dbHelper.replaceUserData(DatabaseHelper.tableCategories, cleanRows(categoriesDocs), userId: userId);
-      }
-      if (txDocs.isNotEmpty) {
-        await _dbHelper.replaceUserData(DatabaseHelper.tableTransactions, cleanRows(txDocs), userId: userId);
-      }
-      if (debtsDocs.isNotEmpty) {
-        await _dbHelper.replaceUserData(DatabaseHelper.tableDebts, cleanRows(debtsDocs), userId: userId);
-      }
-      if (recurringDocs.isNotEmpty) {
-        await _dbHelper.replaceUserData(DatabaseHelper.tableRecurring, cleanRows(recurringDocs), userId: userId);
       }
 
       await _recordSyncSuccess();
@@ -322,6 +346,7 @@ class CloudSyncService {
         totalDownloaded: 0,
       );
     } catch (e, stack) {
+      print('SYNC ERROR (Persons/Debts): Error in downloadCloudDataToLocal: $e');
       debugPrint('[CloudSyncService] Error in downloadCloudDataToLocal: $e\n$stack');
       return (
         success: false,
@@ -518,6 +543,59 @@ class CloudSyncService {
     }
   }
 
+  // --- Persons ---
+
+  /// Pushes a single person to Firestore under users/{uid}/persons/{personId}
+  Future<void> pushPerson(Map<String, dynamic> personMap) async {
+    try {
+      final uid = _authService.currentUserId;
+      if (uid == null || uid.isEmpty) return;
+
+      final id = personMap['id']?.toString();
+      if (id == null || id.isEmpty) return;
+
+      final data = Map<String, dynamic>.from(personMap);
+      data['user_id'] = uid;
+      data['_synced_at'] = FieldValue.serverTimestamp();
+
+      _firestore
+          .collection('users')
+          .doc(uid)
+          .collection('persons')
+          .doc(id)
+          .set(data, SetOptions(merge: true))
+          .catchError((e) {
+        print('SYNC ERROR (Persons/Debts): Error pushing person $id to Firestore: $e');
+        debugPrint('[CloudSyncService] Error pushing person $id: $e');
+      });
+    } catch (e) {
+      print('SYNC ERROR (Persons/Debts): Push person exception: $e');
+      debugPrint('[CloudSyncService] Push person exception: $e');
+    }
+  }
+
+  /// Deletes a person from Firestore under users/{uid}/persons/{personId}
+  Future<void> deletePersonFromCloud(String personId) async {
+    try {
+      final uid = _authService.currentUserId;
+      if (uid == null || uid.isEmpty) return;
+
+      _firestore
+          .collection('users')
+          .doc(uid)
+          .collection('persons')
+          .doc(personId)
+          .delete()
+          .catchError((e) {
+        print('SYNC ERROR (Persons/Debts): Error deleting person $personId from Firestore: $e');
+        debugPrint('[CloudSyncService] Error deleting person $personId: $e');
+      });
+    } catch (e) {
+      print('SYNC ERROR (Persons/Debts): Delete person exception: $e');
+      debugPrint('[CloudSyncService] Delete person exception: $e');
+    }
+  }
+
   // --- Debts ---
 
   /// Pushes a single debt to Firestore under users/{uid}/debts/{debtId}
@@ -540,9 +618,11 @@ class CloudSyncService {
           .doc(id)
           .set(data, SetOptions(merge: true))
           .catchError((e) {
+        print('SYNC ERROR (Persons/Debts): Error pushing debt $id to Firestore: $e');
         debugPrint('[CloudSyncService] Error pushing debt $id: $e');
       });
     } catch (e) {
+      print('SYNC ERROR (Persons/Debts): Push debt exception: $e');
       debugPrint('[CloudSyncService] Push debt exception: $e');
     }
   }
@@ -560,9 +640,11 @@ class CloudSyncService {
           .doc(debtId)
           .delete()
           .catchError((e) {
+        print('SYNC ERROR (Persons/Debts): Error deleting debt $debtId from Firestore: $e');
         debugPrint('[CloudSyncService] Error deleting debt $debtId: $e');
       });
     } catch (e) {
+      print('SYNC ERROR (Persons/Debts): Delete debt exception: $e');
       debugPrint('[CloudSyncService] Delete debt exception: $e');
     }
   }
@@ -599,12 +681,62 @@ class CloudSyncService {
               final row = Map<String, dynamic>.from(data);
               row.remove('_synced_at');
               row['user_id'] = uid;
+
               if (tableName == DatabaseHelper.tableWallets && row['id'] is String) {
                 row['id'] = int.tryParse(row['id'].toString()) ?? row['id'];
               }
+
+              // Foreign Key Enforcement: If debt snapshot arrives, ensure its person exists in SQLite
+              if (tableName == DatabaseHelper.tableDebts) {
+                final rawPersonId = row['person_id']?.toString().trim();
+                if (rawPersonId != null && rawPersonId.isNotEmpty) {
+                  final existingPerson = await _dbHelper.getPersonById(rawPersonId);
+                  if (existingPerson == null) {
+                    debugPrint('[CloudSyncService] Person $rawPersonId not found locally for debt $docId. Fetching from Firestore...');
+                    try {
+                      final personDoc = await _firestore
+                          .collection('users')
+                          .doc(uid)
+                          .collection('persons')
+                          .doc(rawPersonId)
+                          .get();
+
+                      if (personDoc.exists && personDoc.data() != null) {
+                        final pData = Map<String, dynamic>.from(personDoc.data()!);
+                        pData.remove('_synced_at');
+                        pData['user_id'] = uid;
+                        await _dbHelper.upsertRawRow(DatabaseHelper.tablePersons, pData);
+                        debugPrint('[CloudSyncService] Fetched and inserted missing person $rawPersonId into SQLite.');
+                      } else {
+                        // Fallback person in SQLite to avoid SQLite Foreign Key Constraint failure
+                        final fallbackPerson = {
+                          'id': rawPersonId,
+                          'name': row['person_name']?.toString() ?? 'بدون اسم',
+                          'phone': row['phone']?.toString(),
+                          'created_at': DateTime.now().toIso8601String(),
+                          'user_id': uid,
+                        };
+                        await _dbHelper.upsertRawRow(DatabaseHelper.tablePersons, fallbackPerson);
+                        debugPrint('[CloudSyncService] Created fallback person $rawPersonId in SQLite to satisfy FK constraint.');
+                      }
+                    } catch (pe) {
+                      print('SYNC ERROR (Persons/Debts): Failed fetching missing person $rawPersonId from Firestore: $pe');
+                      // Fallback: set person_id to null so debt insertion won't fail
+                      row['person_id'] = null;
+                    }
+                  }
+                  row['person_id'] = rawPersonId;
+                } else {
+                  row['person_id'] = null;
+                }
+              }
+
               await _dbHelper.upsertRawRow(tableName, row);
               localModified = true;
             } catch (e) {
+              if (tableName == DatabaseHelper.tablePersons || tableName == DatabaseHelper.tableDebts) {
+                print('SYNC ERROR (Persons/Debts): Error saving remote $collectionName doc $docId to SQLite: $e');
+              }
               debugPrint('[CloudSyncService] Error saving remote $collectionName doc $docId to SQLite: $e');
             }
           }
@@ -613,6 +745,9 @@ class CloudSyncService {
             await _dbHelper.deleteRawRow(tableName, 'id = ?', [docId]);
             localModified = true;
           } catch (e) {
+            if (tableName == DatabaseHelper.tablePersons || tableName == DatabaseHelper.tableDebts) {
+              print('SYNC ERROR (Persons/Debts): Error deleting remote $collectionName doc $docId from SQLite: $e');
+            }
             debugPrint('[CloudSyncService] Error deleting remote $collectionName doc $docId from SQLite: $e');
           }
         }
@@ -624,13 +759,16 @@ class CloudSyncService {
         onDataChanged?.call();
       }
     }, onError: (err) {
+      if (collectionName == 'persons' || collectionName == 'debts') {
+        print('SYNC ERROR (Persons/Debts): Real-time listener stream error for $collectionName: $err');
+      }
       debugPrint('[CloudSyncService] Real-time listener error for $collectionName: $err');
     });
 
     onSubCreated(sub);
   }
 
-  /// Starts real-time listeners on Firestore collections (transactions, wallets, categories, debts).
+  /// Starts real-time listeners on Firestore collections (transactions, wallets, categories, persons, debts).
   /// Automatically prevents echo-loops by verifying hasPendingWrites.
   void startRealTimeListeners({VoidCallback? onDataChanged}) {
     final uid = _authService.currentUserId;
@@ -642,6 +780,7 @@ class CloudSyncService {
     if (_transactionsSubscription != null ||
         _walletsSubscription != null ||
         _categoriesSubscription != null ||
+        _personsSubscription != null ||
         _debtsSubscription != null) {
       debugPrint('[CloudSyncService] Real-time listeners already active for user: $uid');
       return;
@@ -676,7 +815,16 @@ class CloudSyncService {
       onSubCreated: (s) => _categoriesSubscription = s,
     );
 
-    // 4. Debts
+    // 4. Persons (MUST be initialized before debts!)
+    _setupCollectionListener(
+      collectionName: 'persons',
+      tableName: DatabaseHelper.tablePersons,
+      uid: uid,
+      onDataChanged: onDataChanged,
+      onSubCreated: (s) => _personsSubscription = s,
+    );
+
+    // 5. Debts
     _setupCollectionListener(
       collectionName: 'debts',
       tableName: DatabaseHelper.tableDebts,
@@ -694,6 +842,8 @@ class CloudSyncService {
     _walletsSubscription = null;
     _categoriesSubscription?.cancel();
     _categoriesSubscription = null;
+    _personsSubscription?.cancel();
+    _personsSubscription = null;
     _debtsSubscription?.cancel();
     _debtsSubscription = null;
     debugPrint('[CloudSyncService] All real-time listeners successfully stopped.');
