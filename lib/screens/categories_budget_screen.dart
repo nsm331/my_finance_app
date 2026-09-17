@@ -11,7 +11,10 @@ import '../widgets/custom_text_field.dart';
 import '../widgets/confirm_dialog.dart';
 import '../core/constants/app_colors.dart';
 import '../core/utils/currency_formatter.dart';
+import '../core/utils/date_formatter.dart';
 import '../core/utils/icon_helper.dart';
+import '../services/pdf_report_service.dart';
+import 'category_details_screen.dart';
 
 class CategoriesBudgetScreen extends StatefulWidget {
   final bool isEmbedded;
@@ -24,6 +27,45 @@ class CategoriesBudgetScreen extends StatefulWidget {
 
 class _CategoriesBudgetScreenState extends State<CategoriesBudgetScreen> {
   AppCurrency _selectedCurrency = AppCurrency.yer;
+  DateTime _selectedMonth = DateTime(DateTime.now().year, DateTime.now().month);
+
+  void _changeMonth(int offset) {
+    setState(() {
+      _selectedMonth = DateTime(_selectedMonth.year, _selectedMonth.month + offset);
+    });
+  }
+
+  void _navigateToCategoryDetails(CategoryModel category) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => CategoryDetailsScreen(
+          category: category,
+          selectedMonth: _selectedMonth,
+          initialCurrency: _selectedCurrency,
+        ),
+      ),
+    );
+  }
+
+  Future<void> _exportMonthlyPdf() async {
+    final financeProvider = Provider.of<FinanceProvider>(context, listen: false);
+    final categoryProvider = Provider.of<CategoryProvider>(context, listen: false);
+    final monthName = DateFormatter.formatMonthYear(_selectedMonth);
+    final filename = 'التقرير_المالي_الشهري_${_selectedMonth.year}_${_selectedMonth.month}.pdf';
+
+    await PdfReportService.showReportModal(
+      context,
+      title: 'التقرير المالي الشهري ($monthName)',
+      filename: filename,
+      onGenerateBytes: () => PdfReportService.generateMonthlyReportBytes(
+        month: _selectedMonth,
+        allTransactions: financeProvider.transactions,
+        categories: categoryProvider.categories,
+        currency: _selectedCurrency,
+      ),
+    );
+  }
 
   static const List<IconData> _availableIcons = AppIcons.availableCategoryIcons;
 
@@ -299,7 +341,11 @@ class _CategoriesBudgetScreenState extends State<CategoriesBudgetScreen> {
       final b = cat.getBudgetForCurrency(_selectedCurrency);
       if (b > 0) {
         totalAllocatedBudget += b;
-        totalSpentOnBudgetCategories += financeProvider.getCategoryMonthlySpending(cat.id, _selectedCurrency);
+        totalSpentOnBudgetCategories += financeProvider.getCategoryMonthlySpending(
+          cat.id,
+          _selectedCurrency,
+          month: _selectedMonth,
+        );
       }
     }
 
@@ -311,6 +357,11 @@ class _CategoriesBudgetScreenState extends State<CategoriesBudgetScreen> {
           : AppBar(
               title: const Text('الميزانية والتصنيفات'),
               actions: [
+                IconButton(
+                  icon: const Icon(Icons.picture_as_pdf_rounded),
+                  tooltip: 'تصدير التقرير الشهري PDF',
+                  onPressed: _exportMonthlyPdf,
+                ),
                 IconButton(
                   icon: const Icon(Icons.add_circle_outline_rounded),
                   tooltip: 'إضافة تصنيف جديد',
@@ -326,6 +377,50 @@ class _CategoriesBudgetScreenState extends State<CategoriesBudgetScreen> {
           CurrencySelectorWidget(
             selectedCurrency: _selectedCurrency,
             onCurrencyChanged: (cur) => setState(() => _selectedCurrency = cur),
+          ),
+
+          const SizedBox(height: 12),
+
+          // Month Navigation Bar & PDF Export Shortcut
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+            decoration: BoxDecoration(
+              color: isDark ? AppColors.darkCard : AppColors.lightSurface,
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(
+                color: isDark ? AppColors.darkBorder : AppColors.lightBorder,
+              ),
+            ),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                IconButton(
+                  icon: const Icon(Icons.chevron_right_rounded, size: 28),
+                  tooltip: 'الشهر التالي',
+                  onPressed: () => _changeMonth(1),
+                ),
+                Row(
+                  children: [
+                    const Icon(Icons.calendar_month_rounded, size: 18, color: AppColors.primaryTeal),
+                    const SizedBox(width: 6),
+                    Text(
+                      DateFormatter.formatMonthYear(_selectedMonth),
+                      style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+                    ),
+                  ],
+                ),
+                IconButton(
+                  icon: const Icon(Icons.chevron_left_rounded, size: 28),
+                  tooltip: 'الشهر السابق',
+                  onPressed: () => _changeMonth(-1),
+                ),
+                IconButton(
+                  icon: const Icon(Icons.picture_as_pdf_rounded, color: AppColors.primaryTeal),
+                  tooltip: 'تصدير التقرير الشهري PDF',
+                  onPressed: _exportMonthlyPdf,
+                ),
+              ],
+            ),
           ),
 
           const SizedBox(height: 16),
@@ -423,7 +518,11 @@ class _CategoriesBudgetScreenState extends State<CategoriesBudgetScreen> {
 
           // Expense Categories List with Budgets
           ...categoryProvider.expenseCategories.map((cat) {
-            final spent = financeProvider.getCategoryMonthlySpending(cat.id, _selectedCurrency);
+            final spent = financeProvider.getCategoryMonthlySpending(
+              cat.id,
+              _selectedCurrency,
+              month: _selectedMonth,
+            );
             return Dismissible(
               key: Key(cat.id),
               direction: cat.isDefault ? DismissDirection.none : DismissDirection.endToStart,
@@ -451,6 +550,7 @@ class _CategoriesBudgetScreenState extends State<CategoriesBudgetScreen> {
                 currency: _selectedCurrency,
                 spentAmount: spent,
                 onSetBudget: () => _showSetBudgetDialog(cat),
+                onTap: () => _navigateToCategoryDetails(cat),
               ),
             );
           }),
@@ -467,6 +567,12 @@ class _CategoriesBudgetScreenState extends State<CategoriesBudgetScreen> {
 
           // Income Categories List
           ...categoryProvider.incomeCategories.map((cat) {
+            final incomeTotal = financeProvider.getCategoryMonthlyTotal(
+              cat.id,
+              _selectedCurrency,
+              month: _selectedMonth,
+            );
+
             return Card(
               color: isDark ? AppColors.darkCard : AppColors.lightSurface,
               margin: const EdgeInsets.symmetric(vertical: 4),
@@ -476,36 +582,54 @@ class _CategoriesBudgetScreenState extends State<CategoriesBudgetScreen> {
                   color: isDark ? AppColors.darkBorder : AppColors.lightBorder,
                 ),
               ),
-              child: ListTile(
-                leading: Container(
-                  padding: const EdgeInsets.all(8),
-                  decoration: BoxDecoration(
-                    color: cat.color.withValues(alpha: 0.15),
-                    borderRadius: BorderRadius.circular(10),
+              child: InkWell(
+                borderRadius: BorderRadius.circular(14),
+                onTap: () => _navigateToCategoryDetails(cat),
+                child: ListTile(
+                  leading: Container(
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      color: cat.color.withValues(alpha: 0.15),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: Icon(cat.iconData, color: cat.color, size: 20),
                   ),
-                  child: Icon(cat.iconData, color: cat.color, size: 20),
+                  title: Text(
+                    cat.name,
+                    style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+                  ),
+                  subtitle: Text(
+                    incomeTotal > 0
+                        ? 'المحصل: ${CurrencyFormatter.formatWithCurrency(incomeTotal, _selectedCurrency)}'
+                        : 'اضغط لعرض تفاصيل العمليات',
+                    style: TextStyle(
+                      fontSize: 11,
+                      color: incomeTotal > 0 ? AppColors.income : (isDark ? AppColors.darkTextSecondary : AppColors.lightTextSecondary),
+                      fontWeight: incomeTotal > 0 ? FontWeight.bold : FontWeight.normal,
+                    ),
+                  ),
+                  trailing: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      if (!cat.isDefault)
+                        IconButton(
+                          icon: const Icon(Icons.delete_outline, color: AppColors.expense, size: 20),
+                          onPressed: () async {
+                            final confirmed = await ConfirmDialog.show(
+                              context,
+                              title: 'حذف التصنيف',
+                              content: 'هل تريد حذف تصنيف "${cat.name}"؟',
+                              confirmLabel: 'حذف',
+                            );
+                            if (confirmed) {
+                              await categoryProvider.deleteCategory(cat.id);
+                            }
+                          },
+                        ),
+                      const Icon(Icons.chevron_left_rounded, color: Colors.grey),
+                    ],
+                  ),
                 ),
-                title: Text(
-                  cat.name,
-                  style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
-                ),
-                subtitle: const Text('تصنيف خاص بالدخل والإيرادات', style: TextStyle(fontSize: 11)),
-                trailing: cat.isDefault
-                    ? null
-                    : IconButton(
-                        icon: const Icon(Icons.delete_outline, color: AppColors.expense, size: 20),
-                        onPressed: () async {
-                          final confirmed = await ConfirmDialog.show(
-                            context,
-                            title: 'حذف التصنيف',
-                            content: 'هل تريد حذف تصنيف "${cat.name}"؟',
-                            confirmLabel: 'حذف',
-                          );
-                          if (confirmed) {
-                            await categoryProvider.deleteCategory(cat.id);
-                          }
-                        },
-                      ),
               ),
             );
           }),

@@ -19,6 +19,8 @@ import '../services/guest_service.dart';
 import '../providers/finance_provider.dart';
 import '../providers/debt_provider.dart';
 import '../providers/category_provider.dart';
+import '../services/pdf_report_service.dart';
+import '../core/utils/date_formatter.dart';
 
 class MainNavigationScreen extends StatefulWidget {
   const MainNavigationScreen({super.key});
@@ -148,6 +150,29 @@ class _MainNavigationScreenState extends State<MainNavigationScreen>
             icon: const Icon(Icons.sync_alt_rounded),
             tooltip: 'تحويل بين المحافظ',
             onPressed: () => TransferSheet.show(context),
+          ),
+        ];
+      case 3:
+        return [
+          IconButton(
+            icon: const Icon(Icons.picture_as_pdf_rounded),
+            tooltip: 'تصدير التقرير الشهري PDF',
+            onPressed: () {
+              final financeProvider = Provider.of<FinanceProvider>(context, listen: false);
+              final categoryProvider = Provider.of<CategoryProvider>(context, listen: false);
+              final now = DateTime.now();
+              final filename = 'التقرير_المالي_الشهري_${now.year}_${now.month}.pdf';
+              PdfReportService.showReportModal(
+                context,
+                title: 'التقرير المالي الشهري (${DateFormatter.formatMonthYear(now)})',
+                filename: filename,
+                onGenerateBytes: () => PdfReportService.generateMonthlyReportBytes(
+                  month: now,
+                  allTransactions: financeProvider.transactions,
+                  categories: categoryProvider.categories,
+                ),
+              );
+            },
           ),
         ];
       default:

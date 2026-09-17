@@ -9,6 +9,7 @@ class BudgetProgressCard extends StatelessWidget {
   final AppCurrency currency;
   final double spentAmount;
   final VoidCallback? onSetBudget;
+  final VoidCallback? onTap;
 
   const BudgetProgressCard({
     super.key,
@@ -16,6 +17,7 @@ class BudgetProgressCard extends StatelessWidget {
     required this.currency,
     required this.spentAmount,
     this.onSetBudget,
+    this.onTap,
   });
 
   @override
@@ -48,8 +50,11 @@ class BudgetProgressCard extends StatelessWidget {
           width: percentage >= 1.0 ? 1.5 : 1.0,
         ),
       ),
-      child: Padding(
-        padding: const EdgeInsets.all(16),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(16),
+        child: Padding(
+          padding: const EdgeInsets.all(16),
         child: Column(
           children: [
             // Top: Category info + Edit budget button
@@ -169,6 +174,7 @@ class BudgetProgressCard extends StatelessWidget {
           ],
         ),
       ),
-    );
-  }
+    ),
+  );
+}
 }

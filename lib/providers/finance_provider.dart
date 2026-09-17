@@ -535,6 +535,51 @@ class FinanceProvider extends ChangeNotifier {
         .fold(0.0, (sum, t) => sum + t.amount);
   }
 
+  /// Total monthly amount for a specific category in a given currency (both income and expense)
+  double getCategoryMonthlyTotal(
+    String categoryId,
+    AppCurrency currency, {
+    DateTime? month,
+  }) {
+    final target = month ?? DateTime.now();
+    return _transactions
+        .where((t) =>
+            t.categoryId == categoryId &&
+            t.currency == currency &&
+            !t.isWalletTransfer &&
+            t.date.year == target.year &&
+            t.date.month == target.month)
+        .fold(0.0, (sum, t) => sum + t.amount);
+  }
+
+  /// Returns transactions for a specific category in a given month (excluding internal transfers)
+  List<TransactionModel> getTransactionsForCategoryAndMonth({
+    required String categoryId,
+    required DateTime month,
+    AppCurrency? currency,
+  }) {
+    return _transactions.where((t) {
+      if (t.categoryId != categoryId) return false;
+      if (t.isWalletTransfer) return false;
+      if (t.date.year != month.year || t.date.month != month.month) return false;
+      if (currency != null && t.currency != currency) return false;
+      return true;
+    }).toList();
+  }
+
+  /// Returns all non-transfer transactions in a given month
+  List<TransactionModel> getMonthlyTransactions({
+    required DateTime month,
+    AppCurrency? currency,
+  }) {
+    return _transactions.where((t) {
+      if (t.isWalletTransfer) return false;
+      if (t.date.year != month.year || t.date.month != month.month) return false;
+      if (currency != null && t.currency != currency) return false;
+      return true;
+    }).toList();
+  }
+
   // ================= Query & Filter Helpers =================
 
   List<TransactionModel> getRecentTransactions({int limit = 6}) {
