@@ -9,7 +9,7 @@ import '../services/database_helper.dart';
 class DebtProvider extends ChangeNotifier {
   final DatabaseHelper _dbHelper;
   List<DebtModel> _debts = [];
-  List<PersonModel> _persons = [];
+  final Map<String, PersonModel> _personsMap = {};
   bool _isLoading = false;
 
   DebtProvider({DatabaseHelper? dbHelper, dynamic dbService})
@@ -19,7 +19,12 @@ class DebtProvider extends ChangeNotifier {
 
   bool get isLoading => _isLoading;
   List<DebtModel> get debts => List.unmodifiable(_debts);
-  List<PersonModel> get persons => List.unmodifiable(_persons);
+  
+  List<PersonModel> get persons {
+    final list = _personsMap.values.toList();
+    list.sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+    return List.unmodifiable(list);
+  }
 
   Future<void> loadAll() async {
     _isLoading = true;
@@ -38,13 +43,26 @@ class DebtProvider extends ChangeNotifier {
   }
 
   Future<void> loadDebts({bool notify = true}) async {
-    _debts = await _dbHelper.getAllDebts();
+    final fetched = await _dbHelper.getAllDebts();
+    final seenDebtIds = <String>{};
+    final uniqueDebts = <DebtModel>[];
+    for (final d in fetched) {
+      if (d.id.isNotEmpty && seenDebtIds.add(d.id)) {
+        uniqueDebts.add(d);
+      }
+    }
+    _debts = uniqueDebts;
     if (notify) notifyListeners();
   }
 
   Future<void> loadPersons({bool notify = true}) async {
-    _persons = await _dbHelper.getAllPersons();
-    _persons.sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+    final fetched = await _dbHelper.getAllPersons();
+    _personsMap.clear();
+    for (final p in fetched) {
+      if (p.id.isNotEmpty) {
+        _personsMap[p.id] = p;
+      }
+    }
     if (notify) notifyListeners();
   }
 
@@ -62,19 +80,14 @@ class DebtProvider extends ChangeNotifier {
       notes: (notes != null && notes.trim().isNotEmpty) ? notes.trim() : null,
     );
     await _dbHelper.insertPerson(person);
-    _persons.add(person);
-    _persons.sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+    _personsMap[person.id] = person;
     notifyListeners();
     return person;
   }
 
   Future<void> updatePerson(PersonModel person) async {
     await _dbHelper.updatePerson(person);
-    final index = _persons.indexWhere((p) => p.id == person.id);
-    if (index != -1) {
-      _persons[index] = person;
-      _persons.sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
-    }
+    _personsMap[person.id] = person;
     // Also update cached personName and phone on his debts
     for (int i = 0; i < _debts.length; i++) {
       if (_debts[i].personId == person.id) {
@@ -91,27 +104,23 @@ class DebtProvider extends ChangeNotifier {
 
   Future<void> deletePerson(String personId) async {
     await _dbHelper.deletePerson(personId);
-    _persons.removeWhere((p) => p.id == personId);
+    _personsMap.remove(personId);
     notifyListeners();
   }
 
   PersonModel? findPersonById(String? id) {
-    if (id == null) return null;
-    try {
-      return _persons.firstWhere((p) => p.id == id);
-    } catch (_) {
-      return null;
-    }
+    if (id == null || id.isEmpty) return null;
+    return _personsMap[id];
   }
 
   PersonModel? findPersonByName(String name) {
-    try {
-      return _persons.firstWhere(
-        (p) => p.name.trim().toLowerCase() == name.trim().toLowerCase(),
-      );
-    } catch (_) {
-      return null;
+    final q = name.trim().toLowerCase();
+    for (final p in _personsMap.values) {
+      if (p.name.trim().toLowerCase() == q) {
+        return p;
+      }
     }
+    return null;
   }
 
   // ================= Debts CRUD =================
@@ -282,9 +291,12 @@ class DebtProvider extends ChangeNotifier {
   DebtModel? findById(String id) => findDebtById(id);
 
   List<PersonModel> filterPersons(String? query) {
-    if (query == null || query.trim().isEmpty) return _persons;
+    final allPersons = persons;
+    if (query == null || query.trim().isEmpty) return allPersons;
     final q = query.trim().toLowerCase();
-    return _persons.where((p) {
+    final seen = <String>{};
+    return allPersons.where((p) {
+      if (!seen.add(p.id)) return false;
       final matchesName = p.name.toLowerCase().contains(q);
       final matchesPhone = p.phone?.toLowerCase().contains(q) ?? false;
       final matchesNotes = p.notes?.toLowerCase().contains(q) ?? false;

@@ -365,7 +365,9 @@ class _DebtsScreenState extends State<DebtsScreen> with SingleTickerProviderStat
 
   Widget _buildPersonsLedgerList(DebtProvider debtProvider) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    final persons = debtProvider.filterPersons(_searchController.text);
+    final rawPersons = debtProvider.filterPersons(_searchController.text);
+    final seenIds = <String>{};
+    final persons = rawPersons.where((p) => seenIds.add(p.id)).toList();
 
     if (persons.isEmpty) {
       return Center(
@@ -417,6 +419,7 @@ class _DebtsScreenState extends State<DebtsScreen> with SingleTickerProviderStat
         }).toList();
 
         return Card(
+          key: ValueKey('person_card_${person.id}'),
           margin: const EdgeInsets.only(bottom: 12),
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(18),
@@ -558,8 +561,10 @@ class _DebtsScreenState extends State<DebtsScreen> with SingleTickerProviderStat
     );
   }
 
-  Widget _buildDebtsList(List<DebtModel> list, {required String emptyMessage}) {
+  Widget _buildDebtsList(List<DebtModel> rawList, {required String emptyMessage}) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
+    final seen = <String>{};
+    final list = rawList.where((d) => seen.add(d.id)).toList();
 
     if (list.isEmpty) {
       return Center(
@@ -591,6 +596,7 @@ class _DebtsScreenState extends State<DebtsScreen> with SingleTickerProviderStat
       itemBuilder: (context, index) {
         final debt = list[index];
         return DebtListTile(
+          key: ValueKey('debt_tile_${debt.id}'),
           debt: debt,
           onTap: () {
             Navigator.push(
