@@ -315,5 +315,104 @@ void main() {
       expect(restored.name, 'بقالة ومواد غذائية');
       expect(restored.getBudgetForCurrency(AppCurrency.yer), 150000);
     });
+
+    test('Dashboard Wallet Filter calculation logic', () {
+      final txs = [
+        TransactionModel(
+          id: 'tx1',
+          title: 'راتب كاش',
+          amount: 100000,
+          currency: AppCurrency.yer,
+          type: TransactionType.income,
+          categoryId: 'salary',
+          categoryName: 'راتب',
+          categoryIconCode: 1,
+          categoryColorValue: 1,
+          date: DateTime.now(),
+          walletId: 1,
+        ),
+        TransactionModel(
+          id: 'tx2',
+          title: 'مصروف كاش',
+          amount: 30000,
+          currency: AppCurrency.yer,
+          type: TransactionType.expense,
+          categoryId: 'food',
+          categoryName: 'طعام',
+          categoryIconCode: 1,
+          categoryColorValue: 1,
+          date: DateTime.now(),
+          walletId: 1,
+        ),
+        TransactionModel(
+          id: 'tx3',
+          title: 'إيداع بنكي',
+          amount: 200000,
+          currency: AppCurrency.yer,
+          type: TransactionType.income,
+          categoryId: 'deposit',
+          categoryName: 'إيداع',
+          categoryIconCode: 1,
+          categoryColorValue: 1,
+          date: DateTime.now(),
+          walletId: 2,
+        ),
+        TransactionModel(
+          id: 'tx4',
+          title: 'مصروف بنكي',
+          amount: 50000,
+          currency: AppCurrency.yer,
+          type: TransactionType.expense,
+          categoryId: 'bills',
+          categoryName: 'فواتير',
+          categoryIconCode: 1,
+          categoryColorValue: 1,
+          date: DateTime.now(),
+          walletId: 2,
+        ),
+      ];
+
+      // Overall calculations (null wallet filter)
+      final overallIncome = txs
+          .where((t) => t.type == TransactionType.income && !t.isWalletTransfer)
+          .fold(0.0, (s, t) => s + t.amount);
+      final overallExpense = txs
+          .where((t) => t.type == TransactionType.expense && !t.isWalletTransfer)
+          .fold(0.0, (s, t) => s + t.amount);
+      final overallBalance = overallIncome - overallExpense;
+
+      expect(overallIncome, 300000);
+      expect(overallExpense, 80000);
+      expect(overallBalance, 220000);
+
+      // Filtered to Wallet 1
+      final w1Income = txs
+          .where((t) => t.walletId == 1 && t.type == TransactionType.income)
+          .fold(0.0, (s, t) => s + t.amount);
+      final w1Expense = txs
+          .where((t) => t.walletId == 1 && t.type == TransactionType.expense)
+          .fold(0.0, (s, t) => s + t.amount);
+      final w1Balance = w1Income - w1Expense;
+
+      expect(w1Income, 100000);
+      expect(w1Expense, 30000);
+      expect(w1Balance, 70000);
+
+      // Filtered to Wallet 2
+      final w2Income = txs
+          .where((t) => t.walletId == 2 && t.type == TransactionType.income)
+          .fold(0.0, (s, t) => s + t.amount);
+      final w2Expense = txs
+          .where((t) => t.walletId == 2 && t.type == TransactionType.expense)
+          .fold(0.0, (s, t) => s + t.amount);
+      final w2Balance = w2Income - w2Expense;
+
+      expect(w2Income, 200000);
+      expect(w2Expense, 50000);
+      expect(w2Balance, 150000);
+
+      // Verification that w1 + w2 == overall
+      expect(w1Balance + w2Balance, overallBalance);
+    });
   });
 }

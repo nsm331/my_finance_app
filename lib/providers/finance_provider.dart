@@ -24,6 +24,26 @@ class FinanceProvider extends ChangeNotifier {
   List<RecurringTransactionModel> get recurringTransactions => List.unmodifiable(_recurringTransactions);
   List<WalletModel> get wallets => List.unmodifiable(_wallets);
 
+  int? _selectedDashboardWalletId;
+  int? get selectedDashboardWalletId => _selectedDashboardWalletId;
+
+  /// Sets or clears the dashboard wallet filter (null represents Overall Total / الإجمالي)
+  void setDashboardWalletFilter(dynamic walletId) {
+    int? parsedId;
+    if (walletId is int) {
+      parsedId = walletId;
+    } else if (walletId is String && walletId.isNotEmpty) {
+      parsedId = int.tryParse(walletId);
+    } else {
+      parsedId = null;
+    }
+
+    if (_selectedDashboardWalletId != parsedId) {
+      _selectedDashboardWalletId = parsedId;
+      notifyListeners();
+    }
+  }
+
   /// Loads all data from SQLite database
   Future<void> loadAllData() async {
     _isLoading = true;
@@ -468,50 +488,74 @@ class FinanceProvider extends ChangeNotifier {
     return processedCount;
   }
 
-  // ================= Currency Calculations (Grand Total Across All Wallets) =================
+  // ================= Currency Calculations (Filtered by Wallet or Overall) =================
 
-  /// Total Income for a given currency across ALL wallets (excluding internal wallet transfers)
-  double getTotalIncome(AppCurrency currency) {
+  /// Total Income for a given currency (filtered by wallet if selectedDashboardWalletId is set)
+  double getTotalIncome(AppCurrency currency, {int? walletId}) {
+    final targetWalletId = walletId ?? _selectedDashboardWalletId;
+    if (targetWalletId != null) {
+      return _transactions
+          .where((t) => t.walletId == targetWalletId && t.currency == currency && t.type == TransactionType.income)
+          .fold(0.0, (sum, t) => sum + t.amount);
+    }
     return _transactions
         .where((t) => t.currency == currency && t.type == TransactionType.income && !t.isWalletTransfer)
         .fold(0.0, (sum, t) => sum + t.amount);
   }
 
-  /// Total Expense for a given currency across ALL wallets (excluding internal wallet transfers)
-  double getTotalExpense(AppCurrency currency) {
+  /// Total Expense for a given currency (filtered by wallet if selectedDashboardWalletId is set)
+  double getTotalExpense(AppCurrency currency, {int? walletId}) {
+    final targetWalletId = walletId ?? _selectedDashboardWalletId;
+    if (targetWalletId != null) {
+      return _transactions
+          .where((t) => t.walletId == targetWalletId && t.currency == currency && t.type == TransactionType.expense)
+          .fold(0.0, (sum, t) => sum + t.amount);
+    }
     return _transactions
         .where((t) => t.currency == currency && t.type == TransactionType.expense && !t.isWalletTransfer)
         .fold(0.0, (sum, t) => sum + t.amount);
   }
 
-  /// Total Net Balance for a given currency across ALL wallets (Income - Expense)
-  double getTotalBalance(AppCurrency currency) {
+  /// Total Net Balance for a given currency (filtered by wallet if selectedDashboardWalletId is set)
+  double getTotalBalance(AppCurrency currency, {int? walletId}) {
+    final targetWalletId = walletId ?? _selectedDashboardWalletId;
+    if (targetWalletId != null) {
+      return getWalletBalance(targetWalletId, currency);
+    }
     final income = getTotalIncome(currency);
     final expense = getTotalExpense(currency);
     return income - expense;
   }
 
-  /// Monthly Expense for a given currency (excluding internal wallet transfers)
-  double getMonthlyExpense(AppCurrency currency, {DateTime? month}) {
+  /// Convenience getters for default currency
+  double get totalIncome => getTotalIncome(AppCurrency.yer);
+  double get totalExpense => getTotalExpense(AppCurrency.yer);
+  double get totalExpenses => getTotalExpense(AppCurrency.yer);
+  double get totalBalance => getTotalBalance(AppCurrency.yer);
+
+  /// Monthly Expense for a given currency (excluding internal wallet transfers unless specific wallet selected)
+  double getMonthlyExpense(AppCurrency currency, {DateTime? month, int? walletId}) {
     final target = month ?? DateTime.now();
+    final targetWalletId = walletId ?? _selectedDashboardWalletId;
     return _transactions
         .where((t) =>
+            (targetWalletId != null ? t.walletId == targetWalletId : !t.isWalletTransfer) &&
             t.currency == currency &&
             t.type == TransactionType.expense &&
-            !t.isWalletTransfer &&
             t.date.year == target.year &&
             t.date.month == target.month)
         .fold(0.0, (sum, t) => sum + t.amount);
   }
 
-  /// Monthly Income for a given currency (excluding internal wallet transfers)
-  double getMonthlyIncome(AppCurrency currency, {DateTime? month}) {
+  /// Monthly Income for a given currency (excluding internal wallet transfers unless specific wallet selected)
+  double getMonthlyIncome(AppCurrency currency, {DateTime? month, int? walletId}) {
     final target = month ?? DateTime.now();
+    final targetWalletId = walletId ?? _selectedDashboardWalletId;
     return _transactions
         .where((t) =>
+            (targetWalletId != null ? t.walletId == targetWalletId : !t.isWalletTransfer) &&
             t.currency == currency &&
             t.type == TransactionType.income &&
-            !t.isWalletTransfer &&
             t.date.year == target.year &&
             t.date.month == target.month)
         .fold(0.0, (sum, t) => sum + t.amount);

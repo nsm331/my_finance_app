@@ -120,7 +120,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
     final debtProvider = Provider.of<DebtProvider>(context);
     final categoryProvider = Provider.of<CategoryProvider>(context);
 
-    final recentTransactions = financeProvider.getRecentTransactions(limit: 5);
+    final recentTransactions = financeProvider.selectedDashboardWalletId != null
+        ? financeProvider.transactions
+            .where((t) => t.walletId == financeProvider.selectedDashboardWalletId)
+            .take(5)
+            .toList()
+        : financeProvider.getRecentTransactions(limit: 5);
 
     // Filter categories with high budget usage for selected currency
     final warningBudgetCategories = categoryProvider.expenseCategories.where((cat) {
@@ -132,15 +137,118 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
     return RefreshIndicator(
       onRefresh: () async {
-          await financeProvider.loadAllData();
-          await debtProvider.loadAll();
-          await categoryProvider.loadCategories();
-        },
-        child: ListView(
-          physics: const BouncingScrollPhysics(),
-          padding: const EdgeInsets.symmetric(vertical: 16),
-          children: [
-            // Currency Cards Carousel / Horizontal Scroll
+        await financeProvider.loadAllData();
+        await debtProvider.loadAll();
+        await categoryProvider.loadCategories();
+      },
+      child: ListView(
+        physics: const BouncingScrollPhysics(),
+        padding: const EdgeInsets.symmetric(vertical: 16),
+        children: [
+          // Wallet Filter Dropdown Header
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Row(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.all(6),
+                      decoration: BoxDecoration(
+                        color: AppColors.primaryTeal.withValues(alpha: 0.15),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: const Icon(
+                        Icons.account_balance_wallet_rounded,
+                        size: 16,
+                        color: AppColors.primaryTeal,
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Text(
+                      'عرض رصيد الحسابات:',
+                      style: TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.bold,
+                        color: isDark ? AppColors.darkTextSecondary : AppColors.lightTextSecondary,
+                      ),
+                    ),
+                  ],
+                ),
+                Container(
+                  height: 38,
+                  padding: const EdgeInsets.symmetric(horizontal: 12),
+                  decoration: BoxDecoration(
+                    color: isDark ? AppColors.darkCard : AppColors.lightSurface,
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(
+                      color: isDark ? AppColors.darkBorder : AppColors.lightBorder,
+                      width: 1,
+                    ),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withValues(alpha: isDark ? 0.2 : 0.04),
+                        blurRadius: 4,
+                        offset: const Offset(0, 2),
+                      ),
+                    ],
+                  ),
+                  child: DropdownButtonHideUnderline(
+                    child: DropdownButton<int?>(
+                      value: financeProvider.selectedDashboardWalletId,
+                      icon: const Icon(
+                        Icons.keyboard_arrow_down_rounded,
+                        size: 20,
+                        color: AppColors.primaryTeal,
+                      ),
+                      elevation: 3,
+                      borderRadius: BorderRadius.circular(14),
+                      dropdownColor: isDark ? AppColors.darkCard : AppColors.lightSurface,
+                      style: TextStyle(
+                        fontSize: 12.5,
+                        fontWeight: FontWeight.bold,
+                        color: isDark ? AppColors.darkTextPrimary : AppColors.lightTextPrimary,
+                      ),
+                      onChanged: (int? newWalletId) {
+                        financeProvider.setDashboardWalletFilter(newWalletId);
+                      },
+                      items: [
+                        DropdownMenuItem<int?>(
+                          value: null,
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              const Icon(Icons.all_inclusive_rounded, size: 16, color: AppColors.primaryTeal),
+                              const SizedBox(width: 6),
+                              const Text('الإجمالي (كافة المحافظ)'),
+                            ],
+                          ),
+                        ),
+                        ...financeProvider.wallets.map((wallet) {
+                          return DropdownMenuItem<int?>(
+                            value: wallet.id,
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(wallet.iconData, size: 16, color: wallet.color),
+                                const SizedBox(width: 6),
+                                Text(wallet.name),
+                              ],
+                            ),
+                          );
+                        }),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+
+          const SizedBox(height: 10),
+
+          // Currency Cards Carousel / Horizontal Scroll
             SizedBox(
               height: 210,
               child: ListView.builder(
