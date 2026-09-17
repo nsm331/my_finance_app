@@ -1,7 +1,7 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:permission_handler/permission_handler.dart';
-import 'package:contacts_service/contacts_service.dart';
+import 'package:flutter_contacts/flutter_contacts.dart';
 
 class ContactPickerHelper {
   /// Requests contact permission and opens native contact picker.
@@ -22,20 +22,22 @@ class ContactPickerHelper {
       final status = await Permission.contacts.request();
 
       if (status.isGranted) {
-        final contact = await ContactsService.openDeviceContactPicker();
+        final contact = await FlutterContacts.native.showPicker(
+          properties: {ContactProperty.name, ContactProperty.phone},
+        );
         if (contact == null) return null;
 
         String name = contact.displayName?.trim() ?? '';
-        if (name.isEmpty) {
-          final first = contact.givenName?.trim() ?? '';
-          final last = contact.familyName?.trim() ?? '';
+        if (name.isEmpty && contact.name != null) {
+          final first = contact.name?.first?.trim() ?? '';
+          final last = contact.name?.last?.trim() ?? '';
           name = '$first $last'.trim();
         }
 
         String? phone;
-        if (contact.phones != null && contact.phones!.isNotEmpty) {
-          final firstVal = contact.phones!.first.value?.trim();
-          if (firstVal != null && firstVal.isNotEmpty) {
+        if (contact.phones.isNotEmpty) {
+          final firstVal = contact.phones.first.number.trim();
+          if (firstVal.isNotEmpty) {
             phone = firstVal;
           }
         }
