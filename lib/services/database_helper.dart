@@ -650,6 +650,73 @@ class DatabaseHelper {
     }
   }
 
+  /// Merges legacy duplicate persons by name, consolidates their debts, and deletes redundant rows permanently.
+  Future<void> mergeLegacyDuplicatePersons() async {
+    try {
+      final db = await database;
+      final rows = await db.query(tablePersons);
+      if (rows.isEmpty) return;
+
+      final allPersons = rows.map((m) => PersonModel.fromMap(m)).toList();
+
+      // Group persons by normalized name and userId
+      final Map<String, List<PersonModel>> groupedByName = {};
+      for (final person in allPersons) {
+        final key = '${person.name.trim().toLowerCase()}_${person.userId ?? ""}';
+        groupedByName.putIfAbsent(key, () => []).add(person);
+      }
+
+      int mergedCount = 0;
+
+      for (final entry in groupedByName.entries) {
+        final list = entry.value;
+        if (list.length > 1) {
+          // Designate the first person in the list as primaryPerson
+          final primaryPerson = list.first;
+          final duplicates = list.sublist(1);
+
+          for (final duplicate in duplicates) {
+            // 1. Reassign duplicate's debts to primaryPerson in SQLite
+            await db.rawUpdate(
+              'UPDATE $tableDebts SET person_id = ?, person_name = ? WHERE person_id = ?',
+              [primaryPerson.id, primaryPerson.name, duplicate.id],
+            );
+
+            // Fetch affected debts and push update to Firestore
+            final affectedRows = await db.query(
+              tableDebts,
+              where: 'person_id = ?',
+              whereArgs: [primaryPerson.id],
+            );
+            for (final dRow in affectedRows) {
+              CloudSyncService().pushDebt(dRow);
+            }
+
+            // 2. Delete the duplicate person from SQLite
+            await db.delete(
+              tablePersons,
+              where: 'id = ?',
+              whereArgs: [duplicate.id],
+            );
+
+            // 3. Delete the duplicate person from Firestore to prevent it from syncing back
+            CloudSyncService().deletePersonFromCloud(duplicate.id);
+
+            mergedCount++;
+            debugPrint('[DatabaseHelper] Merged duplicate person "${duplicate.name}" (${duplicate.id}) into primary (${primaryPerson.id})');
+          }
+        }
+      }
+
+      if (mergedCount > 0) {
+        debugPrint('[DatabaseHelper] Legacy cleanup finished: Successfully merged $mergedCount duplicate person records.');
+      }
+    } catch (e) {
+      print('SYNC ERROR (Persons/Debts): Error merging legacy duplicate persons: $e');
+      debugPrint('[DatabaseHelper] Error in mergeLegacyDuplicatePersons: $e');
+    }
+  }
+
   // ==========================================
   // DEBTS CRUD
   // ==========================================

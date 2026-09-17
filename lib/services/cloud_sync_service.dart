@@ -313,6 +313,9 @@ class CloudSyncService {
         );
       }
 
+      // Cleanse and consolidate any legacy duplicate persons restored from cloud
+      await _dbHelper.mergeLegacyDuplicatePersons();
+
       await _recordSyncSuccess();
 
       debugPrint('[CloudSyncService] Download completed: $totalCount items restored.');

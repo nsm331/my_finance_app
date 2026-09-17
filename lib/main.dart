@@ -16,6 +16,7 @@ import 'services/backup_service.dart';
 import 'services/firebase_service.dart';
 import 'services/auto_sync_service.dart';
 import 'services/guest_service.dart';
+import 'services/database_helper.dart';
 import 'screens/main_navigation_screen.dart';
 import 'screens/auth/login_screen.dart';
 
@@ -29,6 +30,7 @@ Future<void> main() async {
     AutoSyncService.instance.initialize();
     final migrationService = DataMigrationService();
     await migrationService.migrateHiveToSqlite(hiveDbService: dbService);
+    await DatabaseHelper.instance.mergeLegacyDuplicatePersons();
     final backupService = BackupService();
     await backupService.checkAndRunDailyBackup();
   } catch (e, stack) {
