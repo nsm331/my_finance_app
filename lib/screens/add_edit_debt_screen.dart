@@ -8,6 +8,7 @@ import '../widgets/custom_text_field.dart';
 import '../widgets/currency_selector_widget.dart';
 import '../core/constants/app_colors.dart';
 import '../core/utils/date_formatter.dart';
+import '../core/utils/contact_picker_helper.dart';
 
 class AddEditDebtScreen extends StatefulWidget {
   final DebtModel? debtToEdit;
@@ -352,26 +353,63 @@ class _AddEditDebtScreenState extends State<AddEditDebtScreen> {
 
               const SizedBox(height: 20),
 
-              // Person Picker Quick Action
-              if (debtProvider.persons.isNotEmpty)
-                Padding(
-                  padding: const EdgeInsets.only(bottom: 12),
-                  child: OutlinedButton.icon(
-                    onPressed: _showSelectPersonSheet,
-                    icon: const Icon(Icons.contacts_rounded, size: 18),
-                    label: Text(
-                      _selectedPersonId != null
-                          ? 'تغيير جهة الاتصال المختارة (${_nameController.text})'
-                          : 'اختيار من سجل الأشخاص الحاليين',
-                      style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
+              // Person Picker Quick Actions
+              Padding(
+                padding: const EdgeInsets.only(bottom: 12),
+                child: Row(
+                  children: [
+                    if (debtProvider.persons.isNotEmpty) ...[
+                      Expanded(
+                        child: OutlinedButton.icon(
+                          onPressed: _showSelectPersonSheet,
+                          icon: const Icon(Icons.contacts_rounded, size: 16),
+                          label: Text(
+                            _selectedPersonId != null
+                                ? 'الشخص (${_nameController.text})'
+                                : 'الأشخاص المسجلين',
+                            style: const TextStyle(fontSize: 11.5, fontWeight: FontWeight.bold),
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          style: OutlinedButton.styleFrom(
+                            padding: const EdgeInsets.symmetric(vertical: 11, horizontal: 8),
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                            side: BorderSide(color: AppColors.primaryTeal.withValues(alpha: 0.5)),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                    ],
+                    Expanded(
+                      child: OutlinedButton.icon(
+                        onPressed: () async {
+                          final picked = await ContactPickerHelper.pickContact(context);
+                          if (picked != null) {
+                            setState(() {
+                              _nameController.text = picked.name;
+                              if (picked.phone != null) {
+                                _phoneController.text = picked.phone!;
+                              }
+                              final match = debtProvider.findPersonByName(picked.name);
+                              _selectedPersonId = match?.id;
+                            });
+                          }
+                        },
+                        icon: const Icon(Icons.contact_phone_rounded, size: 16, color: AppColors.primaryTeal),
+                        label: const Text(
+                          'استيراد من جهات الاتصال',
+                          style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.bold, color: AppColors.primaryTeal),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        style: OutlinedButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(vertical: 11, horizontal: 8),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                          side: const BorderSide(color: AppColors.primaryTeal),
+                        ),
+                      ),
                     ),
-                    style: OutlinedButton.styleFrom(
-                      padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-                      side: BorderSide(color: AppColors.primaryTeal.withValues(alpha: 0.5)),
-                    ),
-                  ),
+                  ],
                 ),
+              ),
 
               // Person Name
               CustomTextField(
@@ -379,6 +417,23 @@ class _AddEditDebtScreenState extends State<AddEditDebtScreen> {
                 label: 'اسم الشخص / الجهة المعنية',
                 hint: 'مثال: محمد عبدالله أو شركة النور',
                 prefixIcon: Icons.person_rounded,
+                suffix: IconButton(
+                  icon: const Icon(Icons.contact_phone_rounded, color: AppColors.primaryTeal),
+                  tooltip: 'استيراد من جهات اتصال الهاتف',
+                  onPressed: () async {
+                    final picked = await ContactPickerHelper.pickContact(context);
+                    if (picked != null) {
+                      setState(() {
+                        _nameController.text = picked.name;
+                        if (picked.phone != null) {
+                          _phoneController.text = picked.phone!;
+                        }
+                        final match = debtProvider.findPersonByName(picked.name);
+                        _selectedPersonId = match?.id;
+                      });
+                    }
+                  },
+                ),
                 onChanged: (val) {
                   // If user manually types, check matching person
                   final match = debtProvider.findPersonByName(val);
@@ -401,6 +456,23 @@ class _AddEditDebtScreenState extends State<AddEditDebtScreen> {
                 hint: '777000000',
                 keyboardType: TextInputType.phone,
                 prefixIcon: Icons.phone_rounded,
+                suffix: IconButton(
+                  icon: const Icon(Icons.contact_phone_rounded, color: AppColors.primaryTeal),
+                  tooltip: 'استيراد من جهات اتصال الهاتف',
+                  onPressed: () async {
+                    final picked = await ContactPickerHelper.pickContact(context);
+                    if (picked != null) {
+                      setState(() {
+                        if (_nameController.text.trim().isEmpty) {
+                          _nameController.text = picked.name;
+                        }
+                        if (picked.phone != null) {
+                          _phoneController.text = picked.phone!;
+                        }
+                      });
+                    }
+                  },
+                ),
               ),
 
               const SizedBox(height: 16),

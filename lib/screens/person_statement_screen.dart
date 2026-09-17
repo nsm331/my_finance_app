@@ -12,6 +12,7 @@ import '../services/pdf_statement_service.dart';
 import '../widgets/report_date_range_dialog.dart';
 import 'add_edit_debt_screen.dart';
 import 'debt_details_screen.dart';
+import '../core/utils/contact_picker_helper.dart';
 
 class PersonStatementScreen extends StatefulWidget {
   final String personId;
@@ -66,6 +67,19 @@ class _PersonStatementScreenState extends State<PersonStatementScreen>
                   decoration: InputDecoration(
                     labelText: 'اسم الشخص / الجهة *',
                     prefixIcon: const Icon(Icons.person_outline),
+                    suffixIcon: IconButton(
+                      icon: const Icon(Icons.contact_phone_outlined, color: AppColors.primaryTeal),
+                      tooltip: 'استيراد من جهات الاتصال',
+                      onPressed: () async {
+                        final picked = await ContactPickerHelper.pickContact(ctx);
+                        if (picked != null) {
+                          nameController.text = picked.name;
+                          if (picked.phone != null) {
+                            phoneController.text = picked.phone!;
+                          }
+                        }
+                      },
+                    ),
                     border: OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
                   ),
                 ),
@@ -76,6 +90,21 @@ class _PersonStatementScreenState extends State<PersonStatementScreen>
                   decoration: InputDecoration(
                     labelText: 'رقم الهاتف (اختياري)',
                     prefixIcon: const Icon(Icons.phone_outlined),
+                    suffixIcon: IconButton(
+                      icon: const Icon(Icons.contact_phone_outlined, color: AppColors.primaryTeal),
+                      tooltip: 'استيراد من جهات الاتصال',
+                      onPressed: () async {
+                        final picked = await ContactPickerHelper.pickContact(ctx);
+                        if (picked != null) {
+                          if (nameController.text.trim().isEmpty) {
+                            nameController.text = picked.name;
+                          }
+                          if (picked.phone != null) {
+                            phoneController.text = picked.phone!;
+                          }
+                        }
+                      },
+                    ),
                     border: OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
                   ),
                 ),
@@ -140,6 +169,54 @@ class _PersonStatementScreenState extends State<PersonStatementScreen>
     }
   }
 
+  Future<void> _confirmDeletePerson(PersonModel person) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+        title: const Row(
+          children: [
+            Icon(Icons.warning_amber_rounded, color: Colors.red),
+            SizedBox(width: 8),
+            Text('تأكيد الحذف', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+          ],
+        ),
+        content: const Text(
+          'هل أنت متأكد من حذف هذا الشخص؟ سيتم حذف جميع الديون المرتبطة به.',
+          style: TextStyle(fontSize: 14),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('إلغاء'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.red,
+              foregroundColor: Colors.white,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+            ),
+            child: const Text('حذف نهائي'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed == true && mounted) {
+      await Provider.of<DebtProvider>(context, listen: false).deletePerson(person.id, cascadeDebts: true);
+      if (mounted) {
+        Navigator.pop(context);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('تم حذف حساب "${person.name}" وجميع ديونه بنجاح'),
+            backgroundColor: Colors.red.shade700,
+          ),
+        );
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
@@ -177,6 +254,11 @@ class _PersonStatementScreenState extends State<PersonStatementScreen>
             icon: const Icon(Icons.edit_outlined),
             tooltip: 'تعديل البيانات',
             onPressed: () => _showEditPersonDialog(person),
+          ),
+          IconButton(
+            icon: const Icon(Icons.delete_outline_rounded, color: Colors.redAccent),
+            tooltip: 'حذف الشخص وديونه',
+            onPressed: () => _confirmDeletePerson(person),
           ),
         ],
       ),

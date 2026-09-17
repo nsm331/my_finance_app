@@ -650,6 +650,49 @@ class DatabaseHelper {
     }
   }
 
+  /// Deletes a person and cascades the deletion to all associated debts (in SQLite and Firestore).
+  Future<void> deletePersonAndAssociatedDebts(String id) async {
+    try {
+      final db = await database;
+
+      // 1. Fetch all debts associated with this person
+      final debtRows = await db.query(
+        tableDebts,
+        where: 'person_id = ?',
+        whereArgs: [id],
+      );
+
+      // 2. Delete each associated debt from SQLite and Firestore
+      for (final dRow in debtRows) {
+        final debtId = dRow['id']?.toString();
+        if (debtId != null && debtId.isNotEmpty) {
+          await db.delete(
+            tableDebts,
+            where: 'id = ?',
+            whereArgs: [debtId],
+          );
+          CloudSyncService().deleteDebtFromCloud(debtId);
+          debugPrint('[DatabaseHelper] Cascaded deletion: Deleted debt $debtId for person $id');
+        }
+      }
+
+      // 3. Delete the person from SQLite
+      await db.delete(
+        tablePersons,
+        where: 'id = ?',
+        whereArgs: [id],
+      );
+
+      // 4. Delete the person from Firestore
+      CloudSyncService().deletePersonFromCloud(id);
+      debugPrint('[DatabaseHelper] Successfully deleted person $id and all associated debts');
+    } catch (e) {
+      print('SYNC ERROR (Persons/Debts): Error deleting person and associated debts: $e');
+      debugPrint('Error in deletePersonAndAssociatedDebts: $e');
+      rethrow;
+    }
+  }
+
   /// Merges legacy duplicate persons by name, consolidates their debts, and deletes redundant rows permanently.
   Future<void> mergeLegacyDuplicatePersons() async {
     try {

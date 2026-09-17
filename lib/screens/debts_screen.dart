@@ -10,6 +10,8 @@ import 'add_edit_debt_screen.dart';
 import 'debt_details_screen.dart';
 import 'person_statement_screen.dart';
 import '../services/pdf_statement_service.dart';
+import '../models/person_model.dart';
+import '../core/utils/contact_picker_helper.dart';
 
 class DebtsScreen extends StatefulWidget {
   const DebtsScreen({super.key});
@@ -59,11 +61,43 @@ class _DebtsScreenState extends State<DebtsScreen> with SingleTickerProviderStat
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
+                OutlinedButton.icon(
+                  onPressed: () async {
+                    final picked = await ContactPickerHelper.pickContact(ctx);
+                    if (picked != null) {
+                      nameController.text = picked.name;
+                      if (picked.phone != null) {
+                        phoneController.text = picked.phone!;
+                      }
+                    }
+                  },
+                  icon: const Icon(Icons.contact_phone_rounded, size: 18, color: AppColors.primaryTeal),
+                  label: const Text('استيراد من جهات اتصال الهاتف', style: TextStyle(color: AppColors.primaryTeal, fontWeight: FontWeight.bold, fontSize: 13)),
+                  style: OutlinedButton.styleFrom(
+                    side: const BorderSide(color: AppColors.primaryTeal),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                    padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 14),
+                  ),
+                ),
+                const SizedBox(height: 12),
                 TextField(
                   controller: nameController,
                   decoration: InputDecoration(
                     labelText: 'اسم الشخص / الجهة *',
                     prefixIcon: const Icon(Icons.person_outline),
+                    suffixIcon: IconButton(
+                      icon: const Icon(Icons.contact_phone_outlined, color: AppColors.primaryTeal),
+                      tooltip: 'استيراد من جهات الاتصال',
+                      onPressed: () async {
+                        final picked = await ContactPickerHelper.pickContact(ctx);
+                        if (picked != null) {
+                          nameController.text = picked.name;
+                          if (picked.phone != null) {
+                            phoneController.text = picked.phone!;
+                          }
+                        }
+                      },
+                    ),
                     border: OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
                   ),
                 ),
@@ -74,6 +108,21 @@ class _DebtsScreenState extends State<DebtsScreen> with SingleTickerProviderStat
                   decoration: InputDecoration(
                     labelText: 'رقم الهاتف (اختياري)',
                     prefixIcon: const Icon(Icons.phone_outlined),
+                    suffixIcon: IconButton(
+                      icon: const Icon(Icons.contact_phone_outlined, color: AppColors.primaryTeal),
+                      tooltip: 'استيراد من جهات الاتصال',
+                      onPressed: () async {
+                        final picked = await ContactPickerHelper.pickContact(ctx);
+                        if (picked != null) {
+                          if (nameController.text.trim().isEmpty) {
+                            nameController.text = picked.name;
+                          }
+                          if (picked.phone != null) {
+                            phoneController.text = picked.phone!;
+                          }
+                        }
+                      },
+                    ),
                     border: OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
                   ),
                 ),
@@ -418,15 +467,39 @@ class _DebtsScreenState extends State<DebtsScreen> with SingleTickerProviderStat
           return debts.any((d) => d.currency == c);
         }).toList();
 
-        return Card(
-          key: ValueKey('person_card_${person.id}'),
-          margin: const EdgeInsets.only(bottom: 12),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(18),
-            side: BorderSide(
-              color: isDark ? AppColors.darkBorder : AppColors.lightBorder,
+        return Dismissible(
+          key: ValueKey('person_dismiss_${person.id}'),
+          direction: DismissDirection.endToStart,
+          background: Container(
+            margin: const EdgeInsets.only(bottom: 12),
+            padding: const EdgeInsets.symmetric(horizontal: 20),
+            decoration: BoxDecoration(
+              color: Colors.red.shade600,
+              borderRadius: BorderRadius.circular(18),
+            ),
+            alignment: Alignment.centerLeft,
+            child: const Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(Icons.delete_sweep_rounded, color: Colors.white),
+                SizedBox(width: 8),
+                Text(
+                  'حذف الشخص',
+                  style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+                ),
+              ],
             ),
           ),
+          confirmDismiss: (_) => _confirmDeletePerson(context, person),
+          child: Card(
+            key: ValueKey('person_card_${person.id}'),
+            margin: const EdgeInsets.only(bottom: 12),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(18),
+              side: BorderSide(
+                color: isDark ? AppColors.darkBorder : AppColors.lightBorder,
+              ),
+            ),
           child: InkWell(
             onTap: () {
               Navigator.push(
@@ -496,8 +569,45 @@ class _DebtsScreenState extends State<DebtsScreen> with SingleTickerProviderStat
                           ),
                         ),
                       ),
-                      const SizedBox(width: 4),
-                      const Icon(Icons.arrow_forward_ios_rounded, size: 14, color: Colors.grey),
+                      PopupMenuButton<String>(
+                        icon: const Icon(Icons.more_vert_rounded, size: 20, color: Colors.grey),
+                        tooltip: 'خيارات',
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                        onSelected: (val) {
+                          if (val == 'statement') {
+                            Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                builder: (_) => PersonStatementScreen(personId: person.id),
+                              ),
+                            );
+                          } else if (val == 'delete') {
+                            _confirmDeletePerson(context, person);
+                          }
+                        },
+                        itemBuilder: (context) => [
+                          const PopupMenuItem(
+                            value: 'statement',
+                            child: Row(
+                              children: [
+                                Icon(Icons.description_outlined, size: 18, color: AppColors.primaryTeal),
+                                SizedBox(width: 8),
+                                Text('كشف الحساب', style: TextStyle(fontSize: 13)),
+                              ],
+                            ),
+                          ),
+                          const PopupMenuItem(
+                            value: 'delete',
+                            child: Row(
+                              children: [
+                                Icon(Icons.delete_outline_rounded, size: 18, color: Colors.red),
+                                SizedBox(width: 8),
+                                Text('حذف الشخص وديونه', style: TextStyle(fontSize: 13, color: Colors.red)),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
                     ],
                   ),
 
@@ -556,9 +666,59 @@ class _DebtsScreenState extends State<DebtsScreen> with SingleTickerProviderStat
               ),
             ),
           ),
+          ),
         );
       },
     );
+  }
+
+  Future<bool> _confirmDeletePerson(BuildContext context, PersonModel person) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+        title: const Row(
+          children: [
+            Icon(Icons.warning_amber_rounded, color: Colors.red),
+            SizedBox(width: 8),
+            Text('تأكيد الحذف', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+          ],
+        ),
+        content: const Text(
+          'هل أنت متأكد من حذف هذا الشخص؟ سيتم حذف جميع الديون المرتبطة به.',
+          style: TextStyle(fontSize: 14),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('إلغاء'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.red,
+              foregroundColor: Colors.white,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+            ),
+            child: const Text('حذف نهائي'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed == true && context.mounted) {
+      await Provider.of<DebtProvider>(context, listen: false).deletePerson(person.id, cascadeDebts: true);
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('تم حذف حساب "${person.name}" وجميع ديونه بنجاح'),
+            backgroundColor: Colors.red.shade700,
+          ),
+        );
+      }
+      return true;
+    }
+    return false;
   }
 
   Widget _buildDebtsList(List<DebtModel> rawList, {required String emptyMessage}) {

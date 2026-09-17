@@ -5,6 +5,7 @@ import '../models/debt_payment_model.dart';
 import '../models/person_model.dart';
 import '../models/app_currency.dart';
 import '../services/database_helper.dart';
+import '../services/cloud_sync_service.dart';
 
 class DebtProvider extends ChangeNotifier {
   final DatabaseHelper _dbHelper;
@@ -102,8 +103,13 @@ class DebtProvider extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> deletePerson(String personId) async {
-    await _dbHelper.deletePerson(personId);
+  Future<void> deletePerson(String personId, {bool cascadeDebts = true}) async {
+    if (cascadeDebts) {
+      await _dbHelper.deletePersonAndAssociatedDebts(personId);
+      _debts.removeWhere((d) => d.personId == personId);
+    } else {
+      await _dbHelper.deletePerson(personId);
+    }
     _personsMap.remove(personId);
     notifyListeners();
   }
@@ -198,6 +204,42 @@ class DebtProvider extends ChangeNotifier {
     final updatedDebt = debt.copyWith(payments: updatedPayments);
 
     await updateDebt(updatedDebt);
+    return updatedDebt;
+  }
+
+  /// Deletes a payment from a specific debt and pushes changes to Firestore
+  Future<DebtModel?> deletePayment({
+    required String debtId,
+    required String paymentId,
+  }) async {
+    final index = _debts.indexWhere((d) => d.id == debtId);
+    if (index == -1) return null;
+
+    final debt = _debts[index];
+    final updatedPayments = debt.payments.where((p) => p.id != paymentId).toList();
+    final updatedDebt = debt.copyWith(payments: updatedPayments);
+
+    await updateDebt(updatedDebt);
+    CloudSyncService().deletePaymentFromCloud(paymentId, debtId: debtId);
+    return updatedDebt;
+  }
+
+  /// Updates an existing payment on a specific debt and pushes changes to Firestore
+  Future<DebtModel?> updatePayment({
+    required String debtId,
+    required DebtPaymentModel updatedPayment,
+  }) async {
+    final index = _debts.indexWhere((d) => d.id == debtId);
+    if (index == -1) return null;
+
+    final debt = _debts[index];
+    final updatedPayments = debt.payments.map((p) {
+      return p.id == updatedPayment.id ? updatedPayment : p;
+    }).toList();
+    final updatedDebt = debt.copyWith(payments: updatedPayments);
+
+    await updateDebt(updatedDebt);
+    CloudSyncService().pushPayment(updatedPayment.toMap());
     return updatedDebt;
   }
 

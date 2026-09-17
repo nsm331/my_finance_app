@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:uuid/uuid.dart';
 import '../models/debt_model.dart';
+import '../models/debt_payment_model.dart';
 import '../models/app_currency.dart';
 import '../models/transaction_model.dart';
 import '../models/category_model.dart';
@@ -30,6 +31,214 @@ class DebtDetailsScreen extends StatefulWidget {
 class _DebtDetailsScreenState extends State<DebtDetailsScreen> {
   Future<void> _exportPdf(DebtModel debt) async {
     await PdfStatementService.exportDebtStatement(context, debt);
+  }
+
+  Future<void> _showEditPaymentDialog(DebtModel debt, DebtPaymentModel payment) async {
+    final amountController = TextEditingController(
+      text: payment.amount % 1 == 0 ? payment.amount.toInt().toString() : payment.amount.toString(),
+    );
+    final noteController = TextEditingController(text: payment.note ?? '');
+    DateTime selectedDate = payment.date;
+
+    final result = await showDialog<bool>(
+      context: context,
+      builder: (ctx) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            final isDark = Theme.of(context).brightness == Brightness.dark;
+
+            return AlertDialog(
+              backgroundColor: isDark ? AppColors.darkCard : AppColors.lightSurface,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+              title: const Row(
+                children: [
+                  Icon(Icons.edit_note_rounded, color: AppColors.primaryTeal),
+                  SizedBox(width: 8),
+                  Text('تعديل الدفعة', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                ],
+              ),
+              content: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    CustomTextField(
+                      controller: amountController,
+                      label: 'مبلغ الدفعة',
+                      hint: '0.00',
+                      keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                      prefixIcon: Icons.attach_money_rounded,
+                      suffix: Padding(
+                        padding: const EdgeInsets.all(12),
+                        child: Text(
+                          debt.currency.symbol,
+                          style: TextStyle(
+                            fontWeight: FontWeight.bold,
+                            color: debt.currency.primaryColor,
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 14),
+                    const Text('تاريخ الدفعة', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+                    const SizedBox(height: 6),
+                    InkWell(
+                      onTap: () async {
+                        final picked = await showDatePicker(
+                          context: context,
+                          initialDate: selectedDate,
+                          firstDate: DateTime(2020),
+                          lastDate: DateTime(2040),
+                          locale: const Locale('ar'),
+                        );
+                        if (picked != null) {
+                          setDialogState(() {
+                            selectedDate = DateTime(
+                              picked.year,
+                              picked.month,
+                              picked.day,
+                              selectedDate.hour,
+                              selectedDate.minute,
+                            );
+                          });
+                        }
+                      },
+                      borderRadius: BorderRadius.circular(14),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+                        decoration: BoxDecoration(
+                          border: Border.all(
+                            color: isDark ? AppColors.darkBorder : AppColors.lightBorder,
+                          ),
+                          borderRadius: BorderRadius.circular(14),
+                        ),
+                        child: Row(
+                          children: [
+                            const Icon(Icons.calendar_month_rounded, size: 20, color: AppColors.primaryTeal),
+                            const SizedBox(width: 10),
+                            Text(
+                              DateFormatter.formatFullDate(selectedDate),
+                              style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 14),
+                    CustomTextField(
+                      controller: noteController,
+                      label: 'ملاحظة',
+                      hint: 'مثال: دفعة نقدية / تحويل بنكي',
+                      prefixIcon: Icons.edit_note_rounded,
+                    ),
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(ctx, false),
+                  child: const Text('إلغاء'),
+                ),
+                ElevatedButton(
+                  onPressed: () => Navigator.pop(ctx, true),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AppColors.primaryTeal,
+                    foregroundColor: Colors.white,
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                  ),
+                  child: const Text('حفظ التعديلات'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+
+    if (result == true && mounted) {
+      final newAmount = double.tryParse(amountController.text.replaceAll(',', '').trim()) ?? 0.0;
+      if (newAmount <= 0) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('الرجاء إدخال مبلغ صحيح')),
+        );
+        return;
+      }
+
+      final updatedPayment = DebtPaymentModel(
+        id: payment.id,
+        debtId: payment.debtId,
+        amount: newAmount,
+        date: selectedDate,
+        note: noteController.text.trim().isEmpty ? null : noteController.text.trim(),
+        impactsBalance: payment.impactsBalance,
+      );
+
+      await Provider.of<DebtProvider>(context, listen: false).updatePayment(
+        debtId: debt.id,
+        updatedPayment: updatedPayment,
+      );
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('تم تعديل الدفعة وتحديث الرصيد بنجاح'),
+            backgroundColor: AppColors.income,
+          ),
+        );
+      }
+    }
+  }
+
+  Future<bool> _confirmDeletePayment(DebtModel debt, DebtPaymentModel payment) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+        title: const Row(
+          children: [
+            Icon(Icons.warning_amber_rounded, color: Colors.red),
+            SizedBox(width: 8),
+            Text('تأكيد حذف الدفعة', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+          ],
+        ),
+        content: Text(
+          'هل أنت متأكد من حذف هذه الدفعة بمبلغ ${CurrencyFormatter.formatWithCurrency(payment.amount, debt.currency)}؟ سيتم إعادة احتساب المبلغ المتبقي على الدين.',
+          style: const TextStyle(fontSize: 14),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('إلغاء'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.red,
+              foregroundColor: Colors.white,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+            ),
+            child: const Text('حذف'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed == true && mounted) {
+      await Provider.of<DebtProvider>(context, listen: false).deletePayment(
+        debtId: debt.id,
+        paymentId: payment.id,
+      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('تم حذف الدفعة وتحديث الرصيد المتبقي بنجاح'),
+            backgroundColor: Colors.redAccent,
+          ),
+        );
+      }
+      return true;
+    }
+    return false;
   }
 
   Future<void> _showPaymentDialog(DebtModel debt, {double? defaultAmount}) async {
@@ -638,33 +847,73 @@ class _DebtDetailsScreenState extends State<DebtDetailsScreen> {
               itemCount: debt.payments.length,
               itemBuilder: (context, index) {
                 final payment = debt.payments[index];
-                return Card(
-                  color: isDark ? AppColors.darkCard : AppColors.lightSurface,
-                  margin: const EdgeInsets.symmetric(vertical: 4),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(14),
-                    side: BorderSide(
-                      color: isDark ? AppColors.darkBorder : AppColors.lightBorder,
+                return Dismissible(
+                  key: ValueKey('payment_dismiss_${payment.id}'),
+                  direction: DismissDirection.endToStart,
+                  background: Container(
+                    margin: const EdgeInsets.symmetric(vertical: 4),
+                    padding: const EdgeInsets.symmetric(horizontal: 20),
+                    decoration: BoxDecoration(
+                      color: Colors.red.shade600,
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                    alignment: Alignment.centerLeft,
+                    child: const Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(Icons.delete_sweep_rounded, color: Colors.white),
+                        SizedBox(width: 8),
+                        Text(
+                          'حذف الدفعة',
+                          style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+                        ),
+                      ],
                     ),
                   ),
-                  child: ListTile(
-                    leading: Container(
-                      padding: const EdgeInsets.all(8),
-                      decoration: BoxDecoration(
-                        color: AppColors.income.withValues(alpha: 0.12),
-                        shape: BoxShape.circle,
+                  confirmDismiss: (_) => _confirmDeletePayment(debt, payment),
+                  child: Card(
+                    color: isDark ? AppColors.darkCard : AppColors.lightSurface,
+                    margin: const EdgeInsets.symmetric(vertical: 4),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(14),
+                      side: BorderSide(
+                        color: isDark ? AppColors.darkBorder : AppColors.lightBorder,
                       ),
-                      child: const Icon(Icons.check_rounded, color: AppColors.income, size: 18),
                     ),
-                    title: Text(
-                      CurrencyFormatter.formatWithCurrency(payment.amount, debt.currency),
-                      style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
-                    ),
-                    subtitle: Text(
-                      '${DateFormatter.formatFullDate(payment.date)}${payment.note != null ? ' • ${payment.note}' : ''}',
-                      style: TextStyle(
-                        fontSize: 11,
-                        color: isDark ? AppColors.darkTextSecondary : AppColors.lightTextSecondary,
+                    child: ListTile(
+                      leading: Container(
+                        padding: const EdgeInsets.all(8),
+                        decoration: BoxDecoration(
+                          color: AppColors.income.withValues(alpha: 0.12),
+                          shape: BoxShape.circle,
+                        ),
+                        child: const Icon(Icons.check_rounded, color: AppColors.income, size: 18),
+                      ),
+                      title: Text(
+                        CurrencyFormatter.formatWithCurrency(payment.amount, debt.currency),
+                        style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+                      ),
+                      subtitle: Text(
+                        '${DateFormatter.formatFullDate(payment.date)}${payment.note != null ? ' • ${payment.note}' : ''}',
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: isDark ? AppColors.darkTextSecondary : AppColors.lightTextSecondary,
+                        ),
+                      ),
+                      trailing: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          IconButton(
+                            icon: const Icon(Icons.edit_outlined, size: 20),
+                            tooltip: 'تعديل الدفعة',
+                            onPressed: () => _showEditPaymentDialog(debt, payment),
+                          ),
+                          IconButton(
+                            icon: const Icon(Icons.delete_outline_rounded, size: 20, color: Colors.redAccent),
+                            tooltip: 'حذف الدفعة',
+                            onPressed: () => _confirmDeletePayment(debt, payment),
+                          ),
+                        ],
                       ),
                     ),
                   ),

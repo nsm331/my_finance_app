@@ -652,6 +652,88 @@ class CloudSyncService {
     }
   }
 
+  // --- Payments ---
+
+  /// Pushes a single payment to Firestore under users/{uid}/debts/{debtId}/payments/{paymentId}
+  Future<void> pushPayment(Map<String, dynamic> paymentMap) async {
+    try {
+      final uid = _authService.currentUserId;
+      if (uid == null || uid.isEmpty) return;
+
+      final paymentId = paymentMap['id']?.toString();
+      final debtId = paymentMap['debtId']?.toString();
+      if (paymentId == null || paymentId.isEmpty) return;
+
+      final data = Map<String, dynamic>.from(paymentMap);
+      data['user_id'] = uid;
+      data['_synced_at'] = FieldValue.serverTimestamp();
+
+      // Write to subcollection if debtId is present
+      if (debtId != null && debtId.isNotEmpty) {
+        _firestore
+            .collection('users')
+            .doc(uid)
+            .collection('debts')
+            .doc(debtId)
+            .collection('payments')
+            .doc(paymentId)
+            .set(data, SetOptions(merge: true))
+            .catchError((e) {
+          debugPrint('[CloudSyncService] Error pushing payment $paymentId to debt subcollection: $e');
+        });
+      }
+
+      // Also mirror to global debt_payments collection for direct query/indexing
+      _firestore
+          .collection('users')
+          .doc(uid)
+          .collection('debt_payments')
+          .doc(paymentId)
+          .set(data, SetOptions(merge: true))
+          .catchError((e) {
+        debugPrint('[CloudSyncService] Error pushing payment $paymentId: $e');
+      });
+    } catch (e) {
+      print('SYNC ERROR (Persons/Debts): Push payment exception: $e');
+      debugPrint('[CloudSyncService] Push payment exception: $e');
+    }
+  }
+
+  /// Deletes a payment from Firestore
+  Future<void> deletePaymentFromCloud(String paymentId, {String? debtId}) async {
+    try {
+      final uid = _authService.currentUserId;
+      if (uid == null || uid.isEmpty) return;
+
+      if (debtId != null && debtId.isNotEmpty) {
+        _firestore
+            .collection('users')
+            .doc(uid)
+            .collection('debts')
+            .doc(debtId)
+            .collection('payments')
+            .doc(paymentId)
+            .delete()
+            .catchError((e) {
+          debugPrint('[CloudSyncService] Error deleting payment $paymentId from debt subcollection: $e');
+        });
+      }
+
+      _firestore
+          .collection('users')
+          .doc(uid)
+          .collection('debt_payments')
+          .doc(paymentId)
+          .delete()
+          .catchError((e) {
+        debugPrint('[CloudSyncService] Error deleting payment $paymentId from debt_payments: $e');
+      });
+    } catch (e) {
+      print('SYNC ERROR (Persons/Debts): Delete payment exception: $e');
+      debugPrint('[CloudSyncService] Delete payment exception: $e');
+    }
+  }
+
   // --- Real-time Listeners ---
 
   void _setupCollectionListener({

@@ -4,6 +4,7 @@ import 'package:my_finance_app/models/wallet_model.dart';
 import 'package:my_finance_app/models/transaction_model.dart';
 import 'package:my_finance_app/models/debt_model.dart';
 import 'package:my_finance_app/models/debt_payment_model.dart';
+import 'package:my_finance_app/models/person_model.dart';
 import 'package:my_finance_app/models/category_model.dart';
 
 void main() {
@@ -245,6 +246,49 @@ void main() {
       expect(fullyPaidDebt.remainingAmount, 0);
       expect(fullyPaidDebt.isSettled, true);
       expect(fullyPaidDebt.isFullyPaid, true);
+
+      // Payment Edit: changing p1 from 4000 to 7000
+      final updatedPayments = fullyPaidDebt.payments.map((p) {
+        if (p.id == 'p1') {
+          return DebtPaymentModel(
+            id: p.id,
+            debtId: p.debtId,
+            amount: 7000,
+            date: p.date,
+          );
+        }
+        return p;
+      }).toList();
+      final editedDebt = fullyPaidDebt.copyWith(payments: updatedPayments);
+      expect(editedDebt.paidAmount, 13000); // 7000 + 6000
+      expect(editedDebt.remainingAmount, 0);
+
+      // Payment Delete: removing p2 (6000)
+      final remainingPayments = editedDebt.payments.where((p) => p.id != 'p2').toList();
+      final afterDeleteDebt = editedDebt.copyWith(payments: remainingPayments);
+      expect(afterDeleteDebt.payments.length, 1);
+      expect(afterDeleteDebt.paidAmount, 7000);
+      expect(afterDeleteDebt.remainingAmount, 3000);
+      expect(afterDeleteDebt.isSettled, false);
+    });
+
+    test('Cascading deletion of Person removes associated debts from list', () {
+      final p1 = PersonModel(id: 'person_1', name: 'خالد عمر');
+      final p2 = PersonModel(id: 'person_2', name: 'أحمد علي');
+
+      List<DebtModel> debts = [
+        DebtModel(id: 'debt_1', personId: 'person_1', personName: 'خالد عمر', totalAmount: 5000, currency: AppCurrency.yer, type: DebtType.forMe),
+        DebtModel(id: 'debt_2', personId: 'person_1', personName: 'خالد عمر', totalAmount: 3000, currency: AppCurrency.yer, type: DebtType.onMe),
+        DebtModel(id: 'debt_3', personId: 'person_2', personName: 'أحمد علي', totalAmount: 8000, currency: AppCurrency.yer, type: DebtType.forMe),
+      ];
+
+      expect(debts.length, 3);
+
+      // Cascade delete person_1
+      debts.removeWhere((d) => d.personId == p1.id);
+      expect(debts.length, 1);
+      expect(debts.first.personId, p2.id);
+      expect(debts.first.personName, 'أحمد علي');
     });
 
     test('CategoryModel budgets and serialization', () {
